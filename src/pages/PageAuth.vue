@@ -1,150 +1,119 @@
 <template>
-  <q-page  class="auth-page flex flex-center q-pa-sm"
-  :style="`background-image: url(${loginBg}); background-size: cover; background-position: center;`">
-    <q-card
-      class="auth bg-transparent text-white q-pa-lg"
-      style="width: 450px;"
-      flat
-  bordered
-    >
-      <q-card-section>
-        <ToolbarTitle />
-      </q-card-section>
-      <q-card-section>
-        <q-tabs
-          v-model="tab"
-          no-caps
-        >
-          <q-tab class="text-primary" name="login" label="Login" />
-          <!--
-          <q-tab name="register" label="Register" />
-          -->
-        </q-tabs>
-      </q-card-section>
-      <q-card-section>
-        <q-form
-          @submit="formSubmit"
-        >
-        <q-input
-         outlined
-           v-model="credentials.email"
-          
-          class="q-mb-md"
-            :bg-color="useLightOrDark('transparent', 'black')"
-            label="Email"
-            :label-color="useLightOrDark('primary', 'white')"
-            type="email"
-            autocomplete="email" 
-          />
-          <!--
-          <q-input
-          outlined
-            v-model="credentials.email"
-            class="q-mb-md"
-            :bg-color="useLightOrDark('transparent', 'black')"
-            label="Email"
-            label-color="black"
-            type="email"
-            autocomplete="email"
-            filled
-          />
-          -->
-          <q-input
-           outlined
-            
-            v-model="credentials.password"
-            class="q-mb-md"
-            :bg-color="useLightOrDark('transparent', 'black')"
-            label="Password"
-            :label-color="useLightOrDark('primary', 'white')"
-            type="password"
-            autocomplete="current-password"
-            
-            />
+  <q-page class="row full-height bg-white">
 
-            <!--
-          <q-input
-            v-model="credentials.password"
-            class="q-mb-md"
-            :bg-color="useLightOrDark('transparent', 'black')"
-            label="Password"
-            label-color="black"
-            type="password"
-            autocomplete="current-password"
-            filled
-          />
-          -->
-          <!--
-          <div v-if="tab === 'register'">
+    <!-- LEFT SIDE -->
+   <!-- LEFT SIDE -->
+<div class="col-12 col-md-6 flex column justify-center q-pa-xl">
+
+  <!-- Logo -->
+  <div class="text-center q-mb-md">
+    <img
+      src="../assets/dynabonuslogo.png"
+      alt="DynaBonus"
+      style="width:250px;"
+    />
+  </div>
+
+  <!-- Hero Text -->
+  <div class="text-center">
+
+    <div
+      class="text-weight-bold"
+      style="
+        font-size: 4rem;
+        line-height: 1.1;
+      "
+    >
+      <span class="text-red">Manage</span>
+      <span class="text-grey-8"> Payments</span>
+      <br />
+      <span class="text-grey-8">in One Click</span>
+    </div>
+
+    <p
+      class="text-grey-7 q-mt-lg"
+      style="
+        font-size: 1.2rem;
+        max-width: 550px;
+        margin-left:auto;
+        margin-right:auto;
+      "
+    >
+      Automate bonus payments, monitor distributor rewards,
+      and generate consolidated reports.
+    </p>
+
+  </div>
+
+  <!-- Footer -->
+  <div class="text-center text-grey-6 q-mt-xl">
+    © AlvinConcepts
+  </div>
+
+</div>
+
+    <!-- RIGHT SIDE -->
+    <div
+      class="col-12 col-md-6 flex flex-center bg-grey-1"
+    >
+      <q-card
+        class="q-pa-xl"
+        style="
+          width: 420px;
+          border-radius: 16px;
+        "
+        flat
+        bordered
+      >
+
+        <q-card-section>
+          <div class="text-h5 text-weight-bold">
+            Welcome Back
+          </div>
+
+          <div class="text-grey-6">
+            Sign in to your account
+          </div>
+        </q-card-section>
+
+        <q-card-section>
+
+          <q-form @submit="formSubmit">
 
             <q-input
-            v-model="credentials.username"
-            class="q-mb-md"
-            :bg-color="useLightOrDark('white', 'black')"
-            label="Username"
-            
-            
-            filled
-          />
-          <q-input
-            v-model="credentials.names"
-            class="q-mb-md"
-            :bg-color="useLightOrDark('white', 'black')"
-            label="Names"
-           
-           
-            filled
-          />
-          <q-input
-            v-model="credentials.telephone"
-            class="q-mb-md"
-            :bg-color="useLightOrDark('white', 'black')"
-            label="Telephone"
-            filled
-          />
-          <q-select
-           filled
-           class="q-mb-md"
-            v-model="credentials.role"
-            :bg-color="useLightOrDark('white', 'black')"
-            
-            option-label="title"
-             option-value="title"
-              label="Role"
-              emit-value
-              map-options 
-              />
-             
-              <q-select
-               filled
-               class="q-mb-md"
-                v-model="credentials.department"
-               :bg-color="useLightOrDark('white', 'black')"
-               
-                option-label="name"
-                option-value="name"
-                 label="Department"
-                 emit-value
-                 map-options 
-                  />
+              outlined
+              v-model="credentials.email"
+              label="Email"
+              type="email"
+              class="q-mb-md"
+            />
 
-          </div>
--->
-          <q-btn
-            class="full-width"
-          color="primary"
-            type="submit"
-            
-            :label="submitButtonTitle"
-            no-caps
-          />
-        </q-form>
-      </q-card-section>
+            <q-input
+              outlined
+              v-model="credentials.password"
+              label="Password"
+              type="password"
+              class="q-mb-lg"
+            />
 
+            <q-btn
+              type="submit"
+              color="primary"
+              class="full-width"
+              label="Login"
+              no-caps
+            />
 
-</q-card>
+          </q-form>
+
+        </q-card-section>
+
+      </q-card>
+    </div>
+
   </q-page>
 </template>
+
 <script setup>
 import { ref,reactive,computed } from 'vue';
 import { useQuasar } from 'quasar';
