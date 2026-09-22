@@ -292,7 +292,6 @@ import autoTable from "jspdf-autotable";
 const searchQuery = ref(''); // Search query for filtering
 const distributors = ref([]);
 const filteredDistributors = ref([]);
-const exchangeRate = 600;
 const selectedDPC=ref(null)
 
 const store = useBonusStore();
