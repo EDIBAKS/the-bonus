@@ -153,6 +153,24 @@
   </q-col>
 </q-row>
 
+          <q-banner class="paid-today-banner q-mt-md" rounded>
+            <div class="row items-center justify-between q-col-gutter-sm">
+              <div class="col-12 col-md-auto">
+                <div class="text-subtitle2 text-weight-bold">Paid by DPC</div>
+                <div class="text-caption">Payment dates: {{ paidPaymentStartDate }} to {{ paidPaymentEndDate }}</div>
+              </div>
+              <div class="col-12 col-md">
+                <div v-if="dailyPaidByDpc.length" class="paid-today-list">
+                  <div v-for="item in dailyPaidByDpc" :key="item.code" class="paid-today-item">
+                    <span class="paid-today-name">{{ item.name }}</span>
+                    <strong>{{ item.amount.toNumber().toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }} {{ currencyType === 'LC' ? 'FC' : 'USD' }}</strong>
+                  </div>
+                </div>
+                <div v-else class="text-caption">No DPCs available</div>
+              </div>
+            </div>
+          </q-banner>
+
       <q-card class="full-width q-mt-md" flat>
           <!-- Search input field -->
  
@@ -166,6 +184,11 @@
         :columns="columns"
         row-key="id"
       >
+      <template v-slot:no-data>
+        <div class="full-width row flex-center text-grey q-gutter-sm q-pa-md">
+          No bonuses found for the selected filters.
+        </div>
+      </template>
       <!-- Bonus Date -->
       <template v-slot:body-cell-bonusDate="props">
         <q-td :props="props">
@@ -297,8 +320,22 @@ const selectedDPC=ref(null)
 
 const store = useBonusStore();
 const storeAuth=useStoreAuth()
-const startDate = ref(null);
-const endDate = ref(null);
+const getLocalDateKey = (date = new Date()) => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+const startOfCurrentMonth = () => {
+  const today = new Date();
+  return getLocalDateKey(new Date(today.getFullYear(), today.getMonth(), 1));
+};
+const endOfCurrentMonth = () => {
+  const today = new Date();
+  return getLocalDateKey(new Date(today.getFullYear(), today.getMonth() + 1, 0));
+};
+const startDate = ref(startOfCurrentMonth());
+const endDate = ref(endOfCurrentMonth());
 const DistributorIDNO = ref("");
 const loading = ref(false); // Loading state
 const loadingStatus = ref({}); // Store loading state for each row
@@ -595,6 +632,12 @@ const fetchBonuses = () => {
     });
 };
 
+watch([startDate, endDate], ([newStartDate, newEndDate]) => {
+  if (newStartDate && newEndDate) {
+    fetchBonuses();
+  }
+});
+
 
 
 const formattedDateRange = computed(() => {
@@ -656,15 +699,43 @@ const totalUnPaid = computed(() => {
 });
 
 
+const todayDate = ref(getLocalDateKey());
+let dayRolloverTimer;
+const paidPaymentStartDate = computed(() => startDate.value || endDate.value || todayDate.value);
+const paidPaymentEndDate = computed(() => endDate.value || startDate.value || todayDate.value);
+
+const dailyPaidByDpc = computed(() => store.Dpcs.map((dpc) => {
+  const total = store.todayPaidBonuses
+    .filter((bonus) => bonus.RegisteredDPC === dpc.dpccode)
+    .reduce((sum, bonus) => sum.plus(
+      convertCurrency(Number(bonus.BonusValue) || 0, bonus.BonusDate)
+    ), new Decimal(0));
+
+  return { code: dpc.dpccode, name: dpc.dpcname, amount: total };
+}));
+
+const checkForNewDay = () => {
+  const currentDate = getLocalDateKey();
+  if (currentDate !== todayDate.value) {
+    todayDate.value = currentDate;
+  }
+};
+
+watch([paidPaymentStartDate, paidPaymentEndDate], ([rangeStart, rangeEnd]) => {
+  store.fetchPaidBonusesByPaymentDate(rangeStart, rangeEnd);
+});
+
 
 
 
 onMounted(async () => {
   await store.fetchDPCs(); // Wait until DPCs are fetched
+  await store.fetchPaidBonusesByPaymentDate(paidPaymentStartDate.value, paidPaymentEndDate.value);
   //console.log("dpcdata", store.Dpcs); // Log after fetching
  
-  store.fetchBonuses();
+  await store.fetchBonuses(startDate.value, endDate.value, DistributorIDNO.value, selectedDPC.value);
   store.subscribeToBonuses(); // Subscribe to real-time updates
+  dayRolloverTimer = setInterval(checkForNewDay, 60000);
 });
 
 // Optional: Watch for changes in dpcs and log when updated
@@ -673,6 +744,7 @@ watch(() => store.Dpcs, (newDpcs) => {
 });
 onUnmounted(() => {
   store.unsubscribeFromBonuses(); // Unsubscribe when leaving page
+  clearInterval(dayRolloverTimer);
 });
 
 </script>
@@ -694,6 +766,31 @@ onUnmounted(() => {
 
 .distributor-option:hover {
   background-color: #f1f1f1;
+}
+.paid-today-banner {
+  background: #e8f2ee;
+  border-left: 4px solid #218c68;
+}
+.paid-today-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 4px 10px;
+  padding: 2px 0;
+}
+.paid-today-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  min-width: 0;
+  padding: 5px 8px;
+  border-left: 2px solid rgba(33, 140, 104, 0.3);
+  font-size: 0.875rem;
+}
+.paid-today-name {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  font-size: 0.75rem;
 }
 .distributor-container {
   display: flex;

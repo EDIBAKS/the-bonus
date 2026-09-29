@@ -5,6 +5,9 @@ import { useStoreAuth } from "./storeAuth";
 export const useBonusStore = defineStore("bonusStore", {
   state: () => ({
     bonuses: [],
+    todayPaidBonuses: [],
+    paidPaymentsDateRange: { startDate: null, endDate: null },
+    bonusQuery: { startDate: null, endDate: null, distributorID: null, selectedDpc: null },
     departmentType: 'my-department',  // Default selection
     bonusData: [],
     mostRecentBonus: null,
@@ -202,41 +205,44 @@ export const useBonusStore = defineStore("bonusStore", {
     async fetchBonuses(startDate, endDate, DistributorIDNO, selectedDpc) {
       this.loading = true;
       this.bonuses = []; // Ensure bonuses are empty at the start
-    
-      // Get the first and last date of the current month
       const now = new Date();
-      const firstDay = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split("T")[0];
-      const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split("T")[0];
-    
-      // Ensure startDate and endDate are formatted correctly
-      const formattedStartDate = startDate ? new Date(startDate).toISOString().split("T")[0] : firstDay;
-      const formattedEndDate = endDate ? new Date(endDate).toISOString().split("T")[0] : lastDay;
+      const formatDate = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+      const firstDay = formatDate(new Date(now.getFullYear(), now.getMonth(), 1));
+      const lastDay = formatDate(new Date(now.getFullYear(), now.getMonth() + 1, 0));
+      const formattedStartDate = startDate || firstDay;
+      const formattedEndDate = endDate || lastDay;
+      this.bonusQuery = {
+        startDate: formattedStartDate,
+        endDate: formattedEndDate,
+        distributorID: DistributorIDNO || null,
+        selectedDpc: selectedDpc || null,
+      };
     
       //console.log("Fetching bonuses for DistributorIDNO:", DistributorIDNO, "between:", formattedStartDate, "and", formattedEndDate); // Debugging log
     
       try {
-        let query = supabase
-          .from("Bonus")
-          .select("*")
-          .gte("BonusDate", formattedStartDate) // Start date filter
-          .lte("BonusDate", formattedEndDate) // End date filter
-          .order("BonusDate", { ascending: false }); // Sort by date descending
-    
-        // If DistributorIDNO is provided, filter bonuses for that distributor
-        if (DistributorIDNO) {
-          console.log("Filtering bonuses for DistributorIDNO:", DistributorIDNO); // Debugging log
-          query = query.eq("DistributorIDNO", DistributorIDNO);
-        }
-    
-        // **Ensure that pagination doesn't limit data**: Let's fetch more rows if necessary.
-        query = query.limit(1000); // Fetch up to 1000 records (or more if needed)
-    
-        const { data: bonuses, error: bonusError } = await query;
-    
-        if (bonusError) {
-          console.error("Error fetching bonuses:", bonusError);
-          this.loading = false;
-          return;
+        const bonuses = [];
+        const pageSize = 1000;
+        let offset = 0;
+
+        while (true) {
+          let query = supabase
+            .from("Bonus")
+            .select("*")
+            .gte("BonusDate", formattedStartDate)
+            .lte("BonusDate", formattedEndDate)
+            .order("BonusDate", { ascending: false })
+            .range(offset, offset + pageSize - 1);
+
+          if (DistributorIDNO) {
+            query = query.eq("DistributorIDNO", DistributorIDNO);
+          }
+
+          const { data, error: bonusError } = await query;
+          if (bonusError) throw bonusError;
+          bonuses.push(...(data || []));
+          if (!data || data.length < pageSize) break;
+          offset += pageSize;
         }
     
         //console.log("Fetched bonuses:", bonuses); // Debugging log
@@ -249,18 +255,16 @@ export const useBonusStore = defineStore("bonusStore", {
         }
     
         // Extract unique DistributorIDNOs from bonuses
-        const distributorIDs = [...new Set(bonuses.map(bonus => bonus.DistributorIDNO))];
-    
-        // Fetch Distributor details
-        const { data: distributors, error: distributorError } = await supabase
-          .from("Distributors")
-          .select("DistributorIDNO, DistributorNames, DistributorPosition, RegisteredDPC")
-          .in("DistributorIDNO", distributorIDs);
-    
-        if (distributorError) {
-          console.error("Error fetching distributors:", distributorError);
-          this.loading = false;
-          return;
+        const distributorIDs = [...new Set(bonuses.map(bonus => bonus.DistributorIDNO).filter(Boolean))];
+        const distributors = [];
+        for (let index = 0; index < distributorIDs.length; index += 200) {
+          const { data, error: distributorError } = await supabase
+            .from("Distributors")
+            .select("DistributorIDNO, DistributorNames, DistributorPosition, RegisteredDPC")
+            .in("DistributorIDNO", distributorIDs.slice(index, index + 200));
+
+          if (distributorError) throw distributorError;
+          distributors.push(...(data || []));
         }
     
         // Create a map for fast lookup
@@ -358,6 +362,56 @@ export const useBonusStore = defineStore("bonusStore", {
       } catch (error) {
         console.error("Error fetching data:", error);
         this.loading = false;
+      }
+    },
+
+    async fetchPaidBonusesByPaymentDate(startDate, endDate) {
+      const today = new Date();
+      const todayKey = [today.getFullYear(), String(today.getMonth() + 1).padStart(2, "0"), String(today.getDate()).padStart(2, "0")].join("-");
+      const rangeStart = startDate || endDate || todayKey;
+      const rangeEnd = endDate || startDate || todayKey;
+      this.paidPaymentsDateRange = { startDate: rangeStart, endDate: rangeEnd };
+      const paidBonuses = [];
+      const pageSize = 1000;
+      let offset = 0;
+
+      try {
+        while (true) {
+          const { data, error } = await supabase
+            .from("Bonus")
+            .select("DistributorIDNO, BonusValue, BonusDate, PaymentDate, Status")
+            .eq("Status", "Paid")
+            .gte("PaymentDate", `${rangeStart}T00:00:00`)
+            .lt("PaymentDate", `${rangeEnd}T23:59:59.999999`)
+            .range(offset, offset + pageSize - 1);
+
+          if (error) throw error;
+          paidBonuses.push(...(data || []));
+          if (!data || data.length < pageSize) break;
+          offset += pageSize;
+        }
+
+        const distributorIDs = [...new Set(paidBonuses.map((bonus) => bonus.DistributorIDNO))];
+        const distributorDpc = new Map();
+        for (let index = 0; index < distributorIDs.length; index += 200) {
+          const { data, error } = await supabase
+            .from("Distributors")
+            .select("DistributorIDNO, RegisteredDPC")
+            .in("DistributorIDNO", distributorIDs.slice(index, index + 200));
+
+          if (error) throw error;
+          for (const distributor of data || []) {
+            distributorDpc.set(distributor.DistributorIDNO, distributor.RegisteredDPC);
+          }
+        }
+
+        this.todayPaidBonuses = paidBonuses
+          .map((bonus) => ({
+            ...bonus,
+            RegisteredDPC: distributorDpc.get(bonus.DistributorIDNO) || null,
+          }));
+      } catch (error) {
+        console.error("Error fetching today's paid bonuses:", error);
       }
     },
     
@@ -471,60 +525,46 @@ async fetchBonusAggregate(startDate, endDate) {
 },
 //here is where i fetch shop summaries
     async fetchBonusSummary(startDate, endDate) {
-      //const supabase = useSupabaseClient()
       const storeAuth = useStoreAuth()
-      const department = storeAuth.userDetails?.department // Get department
-
-      console.log("Retrieved department:", department) // Debugging log
+      const department = storeAuth.userDetails?.department
 
       if (!department) {
         console.error("User department is not available.")
         return
       }
 
-      this.loading = true // Start loading state
-
+      this.loading = true
       const { data, error } = await supabase
-        .rpc('get_bonus_summary', { 
-          start_date: startDate, 
-          end_date: endDate, 
-          department_name: storeAuth.userDetails?.department 
+        .rpc('get_bonus_summary', {
+          start_date: startDate,
+          end_date: endDate,
+          department_name: department
         })
-
-      this.loading = false // Stop loading
+      this.loading = false
 
       if (error) {
         console.error('Error fetching bonus summary:', error)
         return
       }
 
-      console.log("Fetched bonus summary:", data) // Debugging log
-
-      this.bonusData = data // Push fetched data into bonusData
+      this.bonusData = data
     },
 
     async summarizeAll(startDate, endDate) {
-      // Debugging log
-      console.log("Fetching all DPCs bonus summary...");
-    
-      this.loading = true; // Start loading state
-    
+      this.loading = true
       const { data, error } = await supabase
-        .rpc('get_all_bonus_summary', { 
-          start_date: startDate, 
-          end_date: endDate 
-        });
-    
-      this.loading = false; // Stop loading
-    
+        .rpc('get_all_bonus_summary', {
+          start_date: startDate,
+          end_date: endDate
+        })
+      this.loading = false
+
       if (error) {
-        console.error('Error fetching all DPCs bonus summary:', error);
-        return;
+        console.error('Error fetching all DPCs bonus summary:', error)
+        return
       }
-    
-      console.log("Fetched all DPCs bonus summary:", data); // Debugging log
-    
-      this.bonusData = data; // Push fetched data into bonusData
+
+      this.bonusData = data
     },
     
   
@@ -802,17 +842,16 @@ this.bonuses.value=[]
           { event: "*", schema: "public", table: "Bonus" },
           (payload) => {
             console.log("Bonus table updated:", payload);
-
-            if (payload.eventType === "INSERT") {
-              this.bonuses.unshift(payload.new);
-            } else if (payload.eventType === "UPDATE") {
-              const index = this.bonuses.findIndex((b) => b.id === payload.new.id);
-              if (index !== -1) {
-                this.bonuses[index] = payload.new;
-              }
-            } else if (payload.eventType === "DELETE") {
-              this.bonuses = this.bonuses.filter((b) => b.id !== payload.old.id);
-            }
+            this.fetchPaidBonusesByPaymentDate(
+              this.paidPaymentsDateRange.startDate,
+              this.paidPaymentsDateRange.endDate
+            );
+            this.fetchBonuses(
+              this.bonusQuery.startDate,
+              this.bonusQuery.endDate,
+              this.bonusQuery.distributorID,
+              this.bonusQuery.selectedDpc
+            );
           }
         )
         .subscribe();

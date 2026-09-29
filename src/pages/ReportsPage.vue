@@ -86,17 +86,17 @@
       </tr>
     </thead>
     <tbody>
-      <tr v-for="(bonus, index) in bonusStore.bonusData" :key="index" :class="{'hover-row': true, 'inverted-row': index % 2 === 0}">
+      <tr v-for="(bonus, index) in summaryRows" :key="index" :class="{'hover-row': true, 'inverted-row': index % 2 === 0}">
         <td>{{ bonus.dpc_name }}</td>
-        <td>{{ convertCurrency(bonus.totalpaidbonus || 0).toLocaleString() }}</td>
-        <td>{{ convertCurrency(bonus.totalunpaidbonus || 0).toLocaleString() }}</td>
-        <td>{{ convertCurrency(bonus.totalbonus || 0).toLocaleString() }}</td>
+        <td>{{ formatSummaryCurrency(bonus.totalpaidbonus) }}</td>
+        <td>{{ formatSummaryCurrency(bonus.totalunpaidbonus) }}</td>
+        <td>{{ formatSummaryCurrency(bonus.totalbonus) }}</td>
       </tr>
      <tr>
       <td><strong>Total</strong></td>
-      <td><strong>{{ convertCurrency(totalPaidBonus).toLocaleString() }}</strong></td>
-      <td><strong>{{ convertCurrency(totalUnpaidBonus).toLocaleString() }}</strong></td>
-      <td><strong>{{ convertCurrency(totalBonus).toLocaleString() }}</strong></td>
+      <td><strong>{{ formatSummaryCurrency(totalPaidBonus) }}</strong></td>
+      <td><strong>{{ formatSummaryCurrency(totalUnpaidBonus) }}</strong></td>
+      <td><strong>{{ formatSummaryCurrency(totalBonus) }}</strong></td>
      </tr>
      
     </tbody>
@@ -215,6 +215,7 @@ import { useCurrency } from 'src/composables/useCurrency';
 import DepartmentTypeSelector from '../components/DepartmentTypeSelector.vue';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import Decimal from 'decimal.js';
 import departmenttype from '../components/DepartmentTypeSelector.vue'
 import { useQuasar } from "quasar";
 const startDate = ref('');
@@ -223,6 +224,11 @@ const reportType = ref('daily');
 const bonusStore = useBonusStore();
 const storeAuth = useStoreAuth(); // Get user info
 const { currencyType, convertCurrency } = useCurrency(); 
+const formatSummaryCurrency = (amount) =>
+  amount.toDecimalPlaces(2).toNumber().toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
 const searchQuery = ref(''); // Search query for filtering
 const DistributorIDNO=ref('')
 const totalPerDpc = ref({});
@@ -482,16 +488,49 @@ const confirmUpdate = (distributor) => {
 
 
 
+const summaryRows = computed(() => {
+  const rowsByDpc = new Map();
+
+  for (const bonus of bonusStore.bonusData) {
+    const dpcName = bonus.dpc_name ?? bonus.dpcname;
+    const bonusDate = bonus.bonus_date ?? bonus.BonusDate;
+    if (!dpcName) continue;
+    let summary = rowsByDpc.get(dpcName);
+
+    if (!summary) {
+      summary = {
+        dpc_name: dpcName,
+        totalpaidbonus: new Decimal(0),
+        totalunpaidbonus: new Decimal(0),
+        totalbonus: new Decimal(0),
+      };
+      rowsByDpc.set(dpcName, summary);
+    }
+
+    summary.totalpaidbonus = summary.totalpaidbonus.plus(
+      convertCurrency(bonus.totalpaidbonus || 0, bonusDate)
+    );
+    summary.totalunpaidbonus = summary.totalunpaidbonus.plus(
+      convertCurrency(bonus.totalunpaidbonus || 0, bonusDate)
+    );
+    summary.totalbonus = summary.totalbonus.plus(
+      convertCurrency(bonus.totalbonus || 0, bonusDate)
+    );
+  }
+
+  return [...rowsByDpc.values()];
+});
+
 const totalPaidBonus = computed(() =>
-  bonusStore.bonusData.reduce((sum, bonus) => sum + (bonus.totalpaidbonus || 0), 0)
+  summaryRows.value.reduce((sum, bonus) => sum.plus(bonus.totalpaidbonus), new Decimal(0))
 );
 
 const totalUnpaidBonus = computed(() =>
-  bonusStore.bonusData.reduce((sum, bonus) => sum + (bonus.totalunpaidbonus || 0), 0)
+  summaryRows.value.reduce((sum, bonus) => sum.plus(bonus.totalunpaidbonus), new Decimal(0))
 );
 
 const totalBonus = computed(() =>
-  bonusStore.bonusData.reduce((sum, bonus) => sum + (bonus.totalbonus || 0), 0)
+  summaryRows.value.reduce((sum, bonus) => sum.plus(bonus.totalbonus), new Decimal(0))
 );
 
 
