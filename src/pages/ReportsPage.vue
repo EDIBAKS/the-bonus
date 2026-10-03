@@ -343,10 +343,9 @@ const yearlyBonusRows = computed(() => {
     const status = String(bonus.Status || '').trim().toLowerCase();
     if (status !== 'paid' && status !== 'unpaid') continue;
 
-    const dpcCode = status === 'paid'
-      ? bonus.PaidDPC || bonus.RegisteredDPC
-      : bonus.RegisteredDPC;
-    if (!dpcCode || !allowedDpcCodes.has(dpcCode)) continue;
+    const recordedDpcCode = status === 'paid' ? bonus.PaidDPC : bonus.RegisteredDPC;
+    const dpcCode = recordedDpcCode || (isAllDpcsSelected.value ? 'Unassigned' : null);
+    if (!dpcCode || (dpcCode !== 'Unassigned' && !allowedDpcCodes.has(dpcCode))) continue;
 
     const year = String(bonus.BonusDate || '').slice(0, 4);
     if (!/^\d{4}$/.test(year)) continue;
@@ -691,7 +690,6 @@ const allDates = computed(() => {
       return;
     }
     yearlyBonusLoading.value = true;
-    yearlyBonusLoading.value = true;
 
     try {
       yearlyBonusPayments.value = await fetchBonusPayments(rangeStart, rangeEnd);
@@ -936,10 +934,9 @@ const summaryRows = computed(() => {
     const status = String(bonus.Status || '').trim().toLowerCase();
     if (status !== 'paid' && status !== 'unpaid') continue;
 
-    const dpcCode = status === 'paid'
-      ? bonus.PaidDPC || bonus.RegisteredDPC
-      : bonus.RegisteredDPC;
-    if (!dpcCode || !allowedDpcCodes.has(dpcCode)) continue;
+    const recordedDpcCode = status === 'paid' ? bonus.PaidDPC : bonus.RegisteredDPC;
+    const dpcCode = recordedDpcCode || (isAllDpcsSelected.value ? 'Unassigned' : null);
+    if (!dpcCode || (dpcCode !== 'Unassigned' && !allowedDpcCodes.has(dpcCode))) continue;
 
     const dpcName = dpcNameByCode.value[dpcCode] || dpcCode;
     let summary = rowsByDpc.get(dpcCode);
