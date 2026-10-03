@@ -1,21 +1,22 @@
 <template>
-    <div>
+    <div class="column items-start q-gutter-y-xs">
       <!-- My Department Radio -->
       <q-radio
         v-model="bonusStore.departmentType"
         val="my-department"
-        color="green-7"
-        class="q-ml-xl"
+        :color="bonusStore.departmentType === 'my-department' ? 'orange-5' : 'white'"
+        dense
         :label="`My Department`"
-        :class="{ 'text-green-7': bonusStore.departmentType === 'my-department' }"
+        :class="{ 'text-orange-5': bonusStore.departmentType === 'my-department' }"
       />
       <!-- All DPCs Radio -->
       <q-radio
   v-model="bonusStore.departmentType"
   val="all-dpcs"
-  color="green-7"
+  :color="bonusStore.departmentType === 'all-dpcs' ? 'orange-5' : 'white'"
+  dense
   :label="`All DPCs`"
-  :class="{ 'text-green-7': bonusStore.departmentType === 'all-dpcs' }"
+  :class="{ 'text-orange-5': bonusStore.departmentType === 'all-dpcs' }"
    :disable="!(storeAuth.userDetails?.role === 'SuperAdmin' && storeAuth.userDetails?.department === 'Brazzaville')"
 />
     </div>

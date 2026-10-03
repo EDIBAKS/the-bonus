@@ -48,18 +48,13 @@
 
      
 <q-row class="q-mt-md items-center">
-  <!-- Left: Radio Buttons --> 
-
   <q-col cols="12">
   <div class="row items-center q-gutter-md">
-    <q-radio v-model="currencyType" label="USD" val="USD" color="primary" />
-    <q-radio v-model="currencyType" label="Local Currency" val="LC" color="primary" />
-    <DepartmentTypeSelector />
-    <q-btn flat dense round icon="print" @click="printReport" color="primary">
+    <q-btn flat dense round icon="local_printshop" icon-size="22px" aria-label="Print report" @click="printReport" color="primary">
         <q-tooltip>Print Report</q-tooltip>
       </q-btn>
       
-      <q-btn flat dense round icon="picture_as_pdf" @click="exportToPDF" color="red">
+      <q-btn flat dense round icon="picture_as_pdf" icon-size="22px" aria-label="Export PDF" @click="exportToPDF" color="red">
         <q-tooltip>Export to PDF</q-tooltip>
       </q-btn>
 
@@ -108,68 +103,27 @@
   <q-col cols="4" class="text-right">
     <div class="text-bold q-mr-md">
       <div v-if="store.bonuses.length">
-        <div class="row q-gutter-sm justify-center">
-            <!-- Counter Card 1 -->
-            <q-card class="bg-green-5 text-white flex flex-col items-center justify-center hover-card" style="width: 190px; cursor: pointer; border-radius: 20px">
-      <q-card-section class="text-center">
-        <div class="text-h6">Total Paid</div>
-        <div class="text-h4 q-mt-md">
-          <span :class="{'text-caption': true}">{{ currencyType === 'LC' ? 'FC' : 'USD' }}</span>
-          <span class="counter-value">
-
-            {{ totalPaid.toNumber().toLocaleString(undefined, {
-  minimumFractionDigits: 0,
-  maximumFractionDigits: 20
-}) }}
-          </span>
+        <div class="bonus-totals">
+          <div class="bonus-total">
+            <div class="bonus-total-label text-green-8">Total Paid</div>
+            <div class="bonus-total-amount text-green-8">
+              <span class="bonus-currency">{{ currencyType === 'LC' ? 'FC' : 'USD' }}</span>
+              <strong>{{ totalPaid.toNumber().toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }}</strong>
+            </div>
+          </div>
+          <div class="bonus-total">
+            <div class="bonus-total-label text-orange-9">Total Unpaid</div>
+            <div class="bonus-total-amount text-orange-9">
+              <span class="bonus-currency">{{ currencyType === 'LC' ? 'FC' : 'USD' }}</span>
+              <strong>{{ totalUnPaid.toNumber().toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }}</strong>
+            </div>
+          </div>
         </div>
-      </q-card-section>
-    </q-card>
-
-    <!-- Counter Card 2 -->
-    <q-card
-  class="bg-orange-5 text-white flex flex-col items-center justify-center hover-card"
-  style="width: 190px; cursor: pointer; border-radius: 20px"
->
-  <q-card-section class="text-center">
-    <div class="text-h6">Total UnPaid</div>
-    <div class="text-h4 q-mt-md">
-      <span :class="{'text-caption': true}">{{ currencyType === 'LC' ? 'FC' : 'USD' }}</span>
-      <span class="counter-value">
-        {{ totalUnPaid.toNumber().toLocaleString(undefined, {
-  minimumFractionDigits: 0,
-  maximumFractionDigits: 20
-}) }}
-      </span>
-    </div>
-  </q-card-section>
-</q-card>
-          
-  
-  </div>
     </div>
     </div>
    
   </q-col>
 </q-row>
-
-          <q-banner class="paid-today-banner q-mt-md" rounded>
-            <div class="row items-center justify-between q-col-gutter-sm">
-              <div class="col-12 col-md-auto">
-                <div class="text-subtitle2 text-weight-bold">Paid by DPC</div>
-                <div class="text-caption">Payment dates: {{ paidPaymentStartDate }} to {{ paidPaymentEndDate }}</div>
-              </div>
-              <div class="col-12 col-md">
-                <div v-if="dailyPaidByDpc.length" class="paid-today-list">
-                  <div v-for="item in dailyPaidByDpc" :key="item.code" class="paid-today-item">
-                    <span class="paid-today-name">{{ item.name }}</span>
-                    <strong>{{ item.amount.toNumber().toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }} {{ currencyType === 'LC' ? 'FC' : 'USD' }}</strong>
-                  </div>
-                </div>
-                <div v-else class="text-caption">No DPCs available</div>
-              </div>
-            </div>
-          </q-banner>
 
       <q-card class="full-width q-mt-md" flat>
           <!-- Search input field -->
@@ -308,7 +262,6 @@ import { ref, onMounted,watch,computed,watchEffect, onUnmounted} from "vue";
 import { useBonusStore } from "../stores/bonusStore";
 import { useCurrency } from "src/composables/useCurrency";
 import { useStoreAuth } from "src/stores/storeAuth";
-import DepartmentTypeSelector from "../components/DepartmentTypeSelector.vue"
 import { useQuasar } from 'quasar';
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -699,43 +652,12 @@ const totalUnPaid = computed(() => {
 });
 
 
-const todayDate = ref(getLocalDateKey());
-let dayRolloverTimer;
-const paidPaymentStartDate = computed(() => startDate.value || endDate.value || todayDate.value);
-const paidPaymentEndDate = computed(() => endDate.value || startDate.value || todayDate.value);
-
-const dailyPaidByDpc = computed(() => store.Dpcs.map((dpc) => {
-  const total = store.todayPaidBonuses
-    .filter((bonus) => bonus.RegisteredDPC === dpc.dpccode)
-    .reduce((sum, bonus) => sum.plus(
-      convertCurrency(Number(bonus.BonusValue) || 0, bonus.BonusDate)
-    ), new Decimal(0));
-
-  return { code: dpc.dpccode, name: dpc.dpcname, amount: total };
-}));
-
-const checkForNewDay = () => {
-  const currentDate = getLocalDateKey();
-  if (currentDate !== todayDate.value) {
-    todayDate.value = currentDate;
-  }
-};
-
-watch([paidPaymentStartDate, paidPaymentEndDate], ([rangeStart, rangeEnd]) => {
-  store.fetchPaidBonusesByPaymentDate(rangeStart, rangeEnd);
-});
-
-
-
-
 onMounted(async () => {
   await store.fetchDPCs(); // Wait until DPCs are fetched
-  await store.fetchPaidBonusesByPaymentDate(paidPaymentStartDate.value, paidPaymentEndDate.value);
   //console.log("dpcdata", store.Dpcs); // Log after fetching
  
   await store.fetchBonuses(startDate.value, endDate.value, DistributorIDNO.value, selectedDPC.value);
   store.subscribeToBonuses(); // Subscribe to real-time updates
-  dayRolloverTimer = setInterval(checkForNewDay, 60000);
 });
 
 // Optional: Watch for changes in dpcs and log when updated
@@ -744,7 +666,6 @@ watch(() => store.Dpcs, (newDpcs) => {
 });
 onUnmounted(() => {
   store.unsubscribeFromBonuses(); // Unsubscribe when leaving page
-  clearInterval(dayRolloverTimer);
 });
 
 </script>
@@ -767,31 +688,6 @@ onUnmounted(() => {
 .distributor-option:hover {
   background-color: #f1f1f1;
 }
-.paid-today-banner {
-  background: #e8f2ee;
-  border-left: 4px solid #218c68;
-}
-.paid-today-list {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-  gap: 4px 10px;
-  padding: 2px 0;
-}
-.paid-today-item {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 1px;
-  min-width: 0;
-  padding: 5px 8px;
-  border-left: 2px solid rgba(33, 140, 104, 0.3);
-  font-size: 0.875rem;
-}
-.paid-today-name {
-  max-width: 100%;
-  overflow-wrap: anywhere;
-  font-size: 0.75rem;
-}
 .distributor-container {
   display: flex;
   align-items: center;
@@ -802,27 +698,33 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
 }
-.counter-value {
-  animation: counterAnimation 1s ease-in-out;
+.bonus-totals {
+  display: flex;
+  justify-content: center;
+  gap: 20px;
+  flex-wrap: wrap;
 }
 
-@keyframes counterAnimation {
-  0% {
-    transform: scale(0.8);
-    opacity: 0;
-  }
-  100% {
-    transform: scale(1);
-    opacity: 1;
-  }
+.bonus-total {
+  min-width: 135px;
+  text-align: left;
 }
 
-.hover-card {
-  transition: transform 0.3s ease-in-out, box-shadow 0.3s ease-in-out;
+.bonus-total-label {
+  font-size: 0.8rem;
+  font-weight: 700;
 }
 
-.hover-card:hover {
-  transform: scale(1.05);
-  box-shadow: 0px 4px 20px rgba(0, 0, 0, 0.2);
+.bonus-total-amount {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  white-space: nowrap;
+  font-size: 1.35rem;
+}
+
+.bonus-currency {
+  font-size: 0.75rem;
+  font-weight: 700;
 }
 </style>

@@ -5,6 +5,7 @@ import { supabase } from "src/boot/supabase";
 const exchangeRate = ref(null);
 const oldExchangeRate = ref(null);
 const exchangeRateError = ref(null);
+const currencyType = ref("LC");
 let exchangeRatePromise;
 
 function parseValidRate(value) {
@@ -70,7 +71,6 @@ async function loadExchangeRate() {
 
 export function useCurrency() {
   loadExchangeRate();
-  const currencyType = ref("LC");
 
   const convertCurrency = (amount, bonusDate) => {
     if (currencyType.value === "USD") {

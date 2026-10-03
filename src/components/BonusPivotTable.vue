@@ -1,59 +1,79 @@
 <script setup>
 import { defineProps,computed } from "vue";
 import { useCurrency } from "src/composables/useCurrency";
+import Decimal from "decimal.js";
 // Initialize the composable
-const { currencyType, convertCurrency } = useCurrency();
+const { convertCurrency } = useCurrency();
 const props = defineProps({
   pivotData: Object,
-  dpcNames: Array
+  dpcNames: Array,
+  payments: Array,
+  dpcLabels: Object,
 });
+const displayPivotData = computed(() => {
+  if (!props.payments) return props.pivotData || {};
+
+  const totalsByDate = new Map();
+  for (const payment of props.payments) {
+    const paymentDate = String(payment.PaymentDate || '').slice(0, 10);
+    const paidDpc = payment.PaidDPC || 'Unassigned';
+    if (!paymentDate) continue;
+
+    if (!totalsByDate.has(paymentDate)) totalsByDate.set(paymentDate, {});
+    const dailyTotals = totalsByDate.get(paymentDate);
+    dailyTotals[paidDpc] = (dailyTotals[paidDpc] || new Decimal(0)).plus(
+      convertCurrency(payment.BonusValue || 0, payment.BonusDate)
+    );
+  }
+
+  return Object.fromEntries([...totalsByDate.entries()].sort(([left], [right]) => right.localeCompare(left)));
+});
+const reportDpcNames = computed(() => props.dpcNames || []);
 // Compute total for each DPC
 const totalPerDpc = computed(() => {
   const totals = {};
-  for (const dpc of props.dpcNames) {
-    totals[dpc] = Object.values(props.pivotData).reduce((sum, values) => {
-      return sum + (values[dpc] || 0);
-    }, 0);
+  for (const dpc of reportDpcNames.value) {
+    totals[dpc] = Object.values(displayPivotData.value).reduce((sum, values) => {
+      return sum.plus(values[dpc] || 0);
+    }, new Decimal(0));
   }
   return totals;
 });
 const grandTotal = computed(() => {
-  return Object.values(totalPerDpc.value).reduce((sum, val) => sum + val, 0);
+  return Object.values(totalPerDpc.value).reduce((sum, val) => sum.plus(val), new Decimal(0));
+});
+const formatAmount = (amount) => amount.toDecimalPlaces(2).toNumber().toLocaleString(undefined, {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
 });
 </script>
 
 <template>
-   
-    <q-col cols="4" class="q-gutter-sm">
-    <q-radio v-model="currencyType" label="USD" val="USD" color="primary" />
-    <q-radio v-model="currencyType" label="Local Currency" val="LC" color="primary" />
-  </q-col>
- 
   <table class="styled-table">
     <thead>
       <tr>
         <th>Date</th>
-        <th v-for="dpc in dpcNames" :key="dpc">{{ dpc }}</th>
+        <th v-for="dpc in reportDpcNames" :key="dpc">{{ dpcLabels?.[dpc] || dpc }}</th>
       </tr>
     </thead>
     <tbody>
-      <tr v-for="(values, date) in pivotData" :key="date" :class="{'odd-row': Object.keys(pivotData).indexOf(date) % 2 === 0}">
+      <tr v-for="(values, date) in displayPivotData" :key="date" :class="{'odd-row': Object.keys(displayPivotData).indexOf(date) % 2 === 0}">
         <td>{{ date }}</td>
-        <td v-for="dpc in dpcNames" :key="dpc">
-            {{ convertCurrency(values[dpc] || 0).toLocaleString() }}
+        <td v-for="dpc in reportDpcNames" :key="dpc">
+          {{ formatAmount(props.payments ? (values[dpc] || new Decimal(0)) : convertCurrency(values[dpc] || 0)) }}
         </td>
       </tr>
          <!-- Total Row -->
          <tr class="total-row">
         <td><strong>Total</strong></td>
-        <td v-for="dpc in dpcNames" :key="dpc">
-          <strong>{{ convertCurrency(totalPerDpc[dpc] || 0).toLocaleString() }}</strong>
+        <td v-for="dpc in reportDpcNames" :key="dpc">
+          <strong>{{ formatAmount(props.payments ? totalPerDpc[dpc] : convertCurrency(totalPerDpc[dpc] || 0)) }}</strong>
         </td>
       </tr>
       <tr class="total-row">
   <td colspan="100%">
     <div class="text-right q-pa-sm grand-total-text">
-      Grand Total: <strong>{{ convertCurrency(grandTotal).toLocaleString() }}</strong>
+      Grand Total: <strong>{{ formatAmount(convertCurrency(grandTotal)) }}</strong>
     </div>
   </td>
 </tr>

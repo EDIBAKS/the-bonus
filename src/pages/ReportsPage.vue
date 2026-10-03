@@ -2,8 +2,10 @@
   <q-page class="q-pa-md">
     <q-card class="q-pa-md" flat>
       <div class="q-pa-md">
-        <q-input v-model="startDate" label="Start Date" type="date" filled dense class="q-mb-md" />
-        <q-input v-model="endDate" label="End Date" type="date" filled dense class="q-mb-md" />
+        <template v-if="reportType !== 'distributors'">
+          <q-input v-model="startDate" label="Start Date" type="date" filled dense class="q-mb-md" />
+          <q-input v-model="endDate" label="End Date" type="date" filled dense class="q-mb-md" />
+        </template>
 
         <q-select
           v-model="reportType"
@@ -16,7 +18,7 @@
           map-options
         />
 
-        <q-btn label="Filter" color="primary" @click="fetchData" class="q-mt-md full-width" />
+        <q-btn v-if="reportType !== 'distributors'" label="Filter" color="primary" @click="fetchData" class="q-mt-md full-width" />
       </div>
 
       <q-card class="q-mt-md">
@@ -24,13 +26,13 @@
         <q-item-label header class="row items-center justify-between">
           <div>
             <span class="text-lg text-bold">{{ baseTitle }}</span> 
-            <span v-if="start && end"> ({{ start }} - {{ end }})</span>
+            <span v-if="startDate && endDate"> ({{ startDate }} - {{ endDate }})</span>
           </div>
         </q-item-label>
 
         <template v-if="reportType === 'daily'">
           
-          <div v-if="pivotBonusData && Object.keys(pivotBonusData).length > 0">
+          <div v-if="dailyPaidPayments.length > 0">
             <div class="">Bonus Report</div>
             <q-col cols="6" class="q-gutter-sm flex justify-end items-center">
   <q-btn flat dense round icon="print" @click="printReport" color="primary">
@@ -42,7 +44,11 @@
   </q-btn>
 </q-col>
 
-            <BonusPivotTable :pivotData="bonusStore.pivotBonusData" :dpcNames="bonusStore.dpcNames"/>
+            <BonusPivotTable
+              :payments="scopedDailyPaidPayments"
+              :dpc-names="dailyDpcCodes"
+              :dpc-labels="dailyDpcLabels"
+            />
           <!-- Total Row -->
     <!-- Total Row -->
        <!-- Grand Total -->
@@ -53,14 +59,52 @@
             <p>No data available for the selected date range.</p>
           </div>
         </template>
+        <template v-if="reportType === 'user-daily'">
+          <div class="row items-center justify-between q-pa-md">
+            <span class="text-caption text-grey-7">Amounts: {{ currencyType === 'LC' ? 'Local Currency' : 'USD' }}</span>
+            <q-spinner v-if="userDailyLoading" color="primary" size="sm" />
+          </div>
+          <div class="text-caption text-grey-7 q-px-md q-pb-sm">
+            Grouped by the DPC captured when paid and the PaidBy value recorded on the payment.
+          </div>
+          <q-table
+            flat
+            bordered
+            dense
+            row-key="paymentDate"
+            :rows="userDailyRows"
+            :columns="userDailyColumns"
+            :rows-per-page-options="[0]"
+            :pagination="{ sortBy: 'paymentDate', descending: true, rowsPerPage: 0 }"
+          >
+            <template v-slot:no-data>
+              <div class="full-width row flex-center text-grey q-pa-md">
+                No paid payments found for the selected date range.
+              </div>
+            </template>
+            <template v-slot:bottom-row>
+              <q-tr class="bg-grey-2 text-weight-bold">
+                <q-td>Grand Total</q-td>
+                <q-td
+                  v-for="column in userDailyColumns.slice(1, -1)"
+                  :key="column.name"
+                  class="text-right"
+                >
+                  {{ formatUserDailyAmount(userDailyTotals[column.field]) }}
+                </q-td>
+                <q-td class="text-right">
+                  {{ formatUserDailyAmount(userDailyTotals.totalPay) }}
+                </q-td>
+              </q-tr>
+            </template>
+          </q-table>
+        </template>
         <template v-if="reportType === 'summary'">
           <q-row class="items-center justify-between q-mb-md">
-    <!-- Left: Currency Selection -->
     <q-col cols="12">
-  <div class="row items-center q-gutter-md">
-    <q-radio v-model="currencyType" label="USD" val="USD" color="primary" />
-    <q-radio v-model="currencyType" label="Local Currency" val="LC" color="primary" />
-    <DepartmentTypeSelector />
+  <departmenttype />
+  <div class="text-caption text-grey-7">
+    Amounts: {{ currencyType === 'LC' ? 'Local Currency' : 'USD' }}
   </div>
 </q-col>
 
@@ -101,6 +145,56 @@
      
     </tbody>
   </table>
+        </template>
+        <template v-if="reportType === 'yearly'">
+          <div class="row items-center justify-between q-pa-md">
+            <departmenttype />
+            <span class="text-caption text-grey-7">Amounts: {{ currencyType === 'LC' ? 'Local Currency' : 'USD' }}</span>
+            <q-spinner v-if="yearlyBonusLoading" color="primary" size="sm" />
+          </div>
+          <div class="q-px-md q-pb-md">
+            <div class="row items-center q-gutter-lg q-mb-md text-caption">
+              <span><i class="yearly-legend paid" /> Paid</span>
+              <span><i class="yearly-legend unpaid" /> Unpaid</span>
+            </div>
+            <div v-if="yearlyBonusRows.length" class="yearly-chart">
+              <div v-for="row in yearlyBonusRows" :key="row.year" class="yearly-chart-row">
+                <strong class="yearly-chart-year">{{ row.year }}</strong>
+                <div class="yearly-chart-track" :aria-label="`${row.year}: ${formatYearlyCurrency(row.totalPaid)} paid, ${formatYearlyCurrency(row.totalUnpaid)} unpaid`">
+                  <span class="yearly-chart-paid" :style="{ width: `${yearlySegmentWidth(row.totalPaid)}%` }" />
+                  <span class="yearly-chart-unpaid" :style="{ width: `${yearlySegmentWidth(row.totalUnpaid)}%` }" />
+                </div>
+                <span class="yearly-chart-total">{{ formatYearlyCurrency(row.total) }}</span>
+              </div>
+            </div>
+            <div v-else-if="!yearlyBonusLoading" class="text-grey-7 q-py-lg text-center">
+              No bonuses found in the selected scope.
+            </div>
+            <q-markup-table v-if="yearlyBonusRows.length" flat bordered dense class="q-mt-md">
+              <thead>
+                <tr>
+                  <th class="text-left">Bonus Year</th>
+                  <th class="text-right">Paid</th>
+                  <th class="text-right">Unpaid</th>
+                  <th class="text-right">Total</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="row in yearlyBonusRows" :key="row.year">
+                  <td>{{ row.year }}</td>
+                  <td class="text-right">{{ formatYearlyCurrency(row.totalPaid) }}</td>
+                  <td class="text-right">{{ formatYearlyCurrency(row.totalUnpaid) }}</td>
+                  <td class="text-right text-weight-bold">{{ formatYearlyCurrency(row.total) }}</td>
+                </tr>
+                <tr class="text-weight-bold">
+                  <td>All Years</td>
+                  <td class="text-right">{{ formatYearlyCurrency(yearlyBonusTotals.totalPaid) }}</td>
+                  <td class="text-right">{{ formatYearlyCurrency(yearlyBonusTotals.totalUnpaid) }}</td>
+                  <td class="text-right">{{ formatYearlyCurrency(yearlyBonusTotals.total) }}</td>
+                </tr>
+              </tbody>
+            </q-markup-table>
+          </div>
         </template>
         <template v-if="reportType === 'distributors'">
   <div>
@@ -206,13 +300,13 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted,watch,watchEffect } from 'vue';
+import { ref, computed, onMounted, onBeforeUnmount, watch, watchEffect } from 'vue';
 import { useBonusStore } from 'src/stores/bonusStore';
 import { useStoreAuth } from 'src/stores/storeAuth';
-import { format, eachDayOfInterval, parseISO } from 'date-fns';
+import { supabase } from 'src/boot/supabase';
+import { addDays, format, eachDayOfInterval, parseISO } from 'date-fns';
 import BonusPivotTable from 'src/components/BonusPivotTable.vue';
 import { useCurrency } from 'src/composables/useCurrency';
-import DepartmentTypeSelector from '../components/DepartmentTypeSelector.vue';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import Decimal from 'decimal.js';
@@ -221,6 +315,16 @@ import { useQuasar } from "quasar";
 const startDate = ref('');
 const endDate = ref('');
 const reportType = ref('daily');
+const dailyPaidPayments = ref([]);
+const dailyPaidLoading = ref(false);
+const userDailyPayments = ref([]);
+const userDailyLoading = ref(false);
+const summaryPayments = ref([]);
+const summaryLoading = ref(false);
+const yearlyBonusPayments = ref([]);
+const yearlyBonusLoading = ref(false);
+let yearlyBonusSubscription = null;
+let yearlyBonusRefreshTimeout = null;
 const bonusStore = useBonusStore();
 const storeAuth = useStoreAuth(); // Get user info
 const { currencyType, convertCurrency } = useCurrency(); 
@@ -229,14 +333,70 @@ const formatSummaryCurrency = (amount) =>
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   });
+const formatYearlyCurrency = (amount) => new Decimal(amount || 0).toDecimalPlaces(2).toNumber()
+  .toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const yearlyBonusRows = computed(() => {
+  const rowsByYear = new Map();
+  const allowedDpcCodes = new Set(bonusStore.Dpcs.map((dpc) => dpc.dpccode));
+
+  for (const bonus of yearlyBonusPayments.value) {
+    const status = String(bonus.Status || '').trim().toLowerCase();
+    if (status !== 'paid' && status !== 'unpaid') continue;
+
+    const dpcCode = status === 'paid'
+      ? bonus.PaidDPC || bonus.RegisteredDPC
+      : bonus.RegisteredDPC;
+    if (!dpcCode || !allowedDpcCodes.has(dpcCode)) continue;
+
+    const year = String(bonus.BonusDate || '').slice(0, 4);
+    if (!/^\d{4}$/.test(year)) continue;
+
+    let row = rowsByYear.get(year);
+    if (!row) {
+      row = {
+        year,
+        totalPaid: new Decimal(0),
+        totalUnpaid: new Decimal(0),
+        total: new Decimal(0),
+      };
+      rowsByYear.set(year, row);
+    }
+
+    const amount = convertCurrency(bonus.BonusValue || 0, bonus.BonusDate);
+    if (status === 'paid') {
+      row.totalPaid = row.totalPaid.plus(amount);
+    } else {
+      row.totalUnpaid = row.totalUnpaid.plus(amount);
+    }
+    row.total = row.total.plus(amount);
+  }
+
+  return [...rowsByYear.values()].sort((left, right) => Number(left.year) - Number(right.year));
+});
+const yearlyBonusTotals = computed(() => yearlyBonusRows.value.reduce((totals, row) => ({
+  totalPaid: totals.totalPaid.plus(row.totalPaid),
+  totalUnpaid: totals.totalUnpaid.plus(row.totalUnpaid),
+  total: totals.total.plus(row.total),
+}), { totalPaid: new Decimal(0), totalUnpaid: new Decimal(0), total: new Decimal(0) }));
+const yearlyMaximumTotal = computed(() => yearlyBonusRows.value.reduce(
+  (maximum, row) => Decimal.max(maximum, row.total), new Decimal(0)
+));
+const yearlySegmentWidth = (amount) => yearlyMaximumTotal.value.isZero()
+  ? 0
+  : new Decimal(amount).div(yearlyMaximumTotal.value).mul(100).toNumber();
 const searchQuery = ref(''); // Search query for filtering
 const DistributorIDNO=ref('')
 const totalPerDpc = ref({});
 const reportOptions = [
   { label: 'Daily', value: 'daily' },
+  { label: 'Paid by User per Day', value: 'user-daily' },
   { label: 'Summary', value: 'summary' },
+  { label: 'Paid and Unpaid by Year', value: 'yearly' },
   { label: 'Distributors', value: 'distributors' }
 ];
+const baseTitle = computed(() =>
+  reportOptions.find((option) => option.value === reportType.value)?.label || 'Bonus Report'
+);
 const $q = useQuasar();
 // ✅ Use computed property to access the data from Pinia store
 const pivotBonusData = computed(() => bonusStore.pivotBonusData);
@@ -263,6 +423,25 @@ const dpcNames = computed(() => {
 
   return Object.keys(firstRow).map(dpc => dpc || 'Unknown'); // Ensure no null/undefined values
 });
+const dpcNameByCode = computed(() => Object.fromEntries(
+  bonusStore.Dpcs.map((dpc) => [dpc.dpccode, dpc.dpcname])
+));
+const allowedDpcCodes = computed(() => new Set(bonusStore.Dpcs.map((dpc) => dpc.dpccode)));
+const isAllDpcsSelected = computed(() => bonusStore.departmentType === 'all-dpcs');
+const paymentDpcIsInScope = (dpcCode) =>
+  allowedDpcCodes.value.has(dpcCode) || (isAllDpcsSelected.value && !dpcCode);
+const scopedDailyPaidPayments = computed(() => dailyPaidPayments.value.filter(
+  (payment) => paymentDpcIsInScope(payment.PaidDPC)
+));
+const dailyDpcCodes = computed(() => [...new Set([
+  ...bonusStore.Dpcs.map((dpc) => dpc.dpccode),
+  ...dailyPaidPayments.value.map((payment) => payment.PaidDPC).filter(Boolean),
+])].filter((dpcCode) => isAllDpcsSelected.value || allowedDpcCodes.value.has(dpcCode))
+  .sort((left, right) => left.localeCompare(right))
+  .concat(isAllDpcsSelected.value && dailyPaidPayments.value.some((payment) => !payment.PaidDPC) ? ['Unassigned'] : []));
+const dailyDpcLabels = computed(() => Object.fromEntries(
+  dailyDpcCodes.value.map((dpcCode) => [dpcCode, dpcNameByCode.value[dpcCode] || dpcCode])
+));
 // Generate all dates in range
 const allDates = computed(() => {
   if (!startDate.value || !endDate.value) return [];
@@ -272,6 +451,266 @@ const allDates = computed(() => {
     end: parseISO(endDate.value),
   }).map(date => format(date, 'yyyy-MM-dd')); // Format to match DB date
 })
+  const userDailyDates = computed(() => [...allDates.value].sort((left, right) => right.localeCompare(left)));
+  const getPaymentPaidBy = (payment) => String(payment.PaidBy || '').trim() || 'Unknown';
+  const scopedUserDailyPayments = computed(() => {
+    return userDailyPayments.value.filter((payment) => paymentDpcIsInScope(payment.PaidDPC));
+  });
+  const userDailyUsers = computed(() => [...new Set(scopedUserDailyPayments.value.map(getPaymentPaidBy))]
+    .sort((left, right) => left.localeCompare(right)));
+  const userDailyBreakdowns = computed(() => {
+    const breakdowns = new Map();
+
+    for (const payment of scopedUserDailyPayments.value) {
+      const dpcCode = payment.PaidDPC || 'Unassigned';
+      const paidBy = getPaymentPaidBy(payment);
+      const key = JSON.stringify([dpcCode, paidBy]);
+      if (breakdowns.has(key)) continue;
+
+      const dpcName = dpcNameByCode.value[dpcCode] || dpcCode;
+      breakdowns.set(key, {
+        key: `breakdown${breakdowns.size}`,
+        dpcCode,
+        dpcName,
+        paidBy,
+        label: `${dpcName} / ${paidBy}`,
+      });
+    }
+
+    return [...breakdowns.values()].sort((left, right) =>
+      left.dpcName.localeCompare(right.dpcName) || left.paidBy.localeCompare(right.paidBy)
+    );
+  });
+  const userColorClasses = [
+    'text-red-9', 'text-blue-9', 'text-purple-9', 'text-teal-9', 'text-orange-10',
+    'text-indigo-9', 'text-pink-9', 'text-cyan-10', 'text-brown-8', 'text-light-green-10',
+  ];
+  const formatUserDailyAmount = (amount) => new Decimal(amount || 0).toDecimalPlaces(2).toNumber()
+    .toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const userDailyColumns = computed(() => [
+    { name: 'paymentDate', label: 'Date', field: 'paymentDate', align: 'left', sortable: true },
+    ...userDailyBreakdowns.value.map((breakdown) => ({
+      name: breakdown.key,
+      label: breakdown.label,
+      field: breakdown.key,
+      align: 'right',
+      style: 'min-width: 130px',
+      classes: `${userColorClasses[userDailyUsers.value.indexOf(breakdown.paidBy) % userColorClasses.length]} text-weight-medium`,
+      headerClasses: `${userColorClasses[userDailyUsers.value.indexOf(breakdown.paidBy) % userColorClasses.length]} text-weight-bold`,
+      format: formatUserDailyAmount,
+    })),
+    {
+      name: 'totalPay',
+      label: 'Total Daily Payment',
+      field: 'totalPay',
+      align: 'right',
+      classes: 'text-weight-bold',
+      headerClasses: 'text-weight-bold',
+      format: formatUserDailyAmount,
+    },
+  ]);
+  const userDailyRows = computed(() => {
+    if (userDailyPayments.value.length === 0) return [];
+
+    const totalsByDate = new Map();
+
+    for (const payment of scopedUserDailyPayments.value) {
+      const paymentDate = String(payment.PaymentDate || '').slice(0, 10);
+      const breakdownKey = JSON.stringify([payment.PaidDPC || 'Unassigned', getPaymentPaidBy(payment)]);
+      if (!paymentDate || !userDailyDates.value.includes(paymentDate)) continue;
+
+      if (!totalsByDate.has(paymentDate)) totalsByDate.set(paymentDate, new Map());
+      const userTotals = totalsByDate.get(paymentDate);
+      const amount = convertCurrency(Number(payment.BonusValue) || 0, payment.BonusDate);
+      userTotals.set(breakdownKey, (userTotals.get(breakdownKey) || new Decimal(0)).plus(amount));
+    }
+
+    return userDailyDates.value.map((paymentDate) => {
+      const row = { paymentDate };
+      const userTotals = totalsByDate.get(paymentDate) || new Map();
+      let totalPay = new Decimal(0);
+
+      userDailyBreakdowns.value.forEach((breakdown) => {
+        const key = JSON.stringify([breakdown.dpcCode, breakdown.paidBy]);
+        const amount = userTotals.get(key) || new Decimal(0);
+        row[breakdown.key] = amount;
+        totalPay = totalPay.plus(amount);
+      });
+
+      row.totalPay = totalPay;
+      return row;
+    });
+  });
+  const userDailyTotals = computed(() => {
+    const totals = { totalPay: new Decimal(0) };
+
+    userDailyBreakdowns.value.forEach((breakdown) => {
+      const field = breakdown.key;
+      totals[field] = userDailyRows.value.reduce(
+        (sum, row) => sum.plus(row[field] || 0),
+        new Decimal(0)
+      );
+      totals.totalPay = totals.totalPay.plus(totals[field]);
+    });
+
+    return totals;
+  });
+  const fetchDailyPaidPayments = async () => {
+    if (!startDate.value || !endDate.value) return;
+
+    dailyPaidLoading.value = true;
+    dailyPaidPayments.value = [];
+    const payments = [];
+    const pageSize = 1000;
+    let offset = 0;
+    const dayAfterEndDate = format(addDays(parseISO(endDate.value), 1), 'yyyy-MM-dd');
+
+    try {
+      while (true) {
+        const { data, error } = await supabase
+          .from('Bonus')
+          .select('PaymentDate, BonusDate, BonusValue, PaidDPC')
+          .eq('Status', 'Paid')
+          .gte('PaymentDate', `${startDate.value}T00:00:00`)
+          .lt('PaymentDate', `${dayAfterEndDate}T00:00:00`)
+          .range(offset, offset + pageSize - 1);
+
+        if (error) throw error;
+        payments.push(...(data || []));
+        if (!data || data.length < pageSize) break;
+        offset += pageSize;
+      }
+
+      dailyPaidPayments.value = payments;
+    } catch (error) {
+      console.error('Error fetching daily payments:', error);
+      $q.notify({ type: 'negative', message: 'Unable to load daily payments. Confirm the PaidDPC migration has been applied.' });
+    } finally {
+      dailyPaidLoading.value = false;
+    }
+  };
+  const fetchUserDailyPayments = async () => {
+    if (!startDate.value || !endDate.value) return;
+
+    userDailyLoading.value = true;
+    userDailyPayments.value = [];
+    const payments = [];
+    const pageSize = 1000;
+    let offset = 0;
+    const dayAfterEndDate = format(addDays(parseISO(endDate.value), 1), 'yyyy-MM-dd');
+
+    try {
+      while (true) {
+        const { data, error } = await supabase
+          .from('Bonus')
+          .select('PaymentDate, PaidBy, BonusValue, BonusDate, PaidDPC')
+          .eq('Status', 'Paid')
+          .gte('PaymentDate', `${startDate.value}T00:00:00`)
+          .lt('PaymentDate', `${dayAfterEndDate}T00:00:00`)
+          .range(offset, offset + pageSize - 1);
+
+        if (error) throw error;
+        payments.push(...(data || []));
+        if (!data || data.length < pageSize) break;
+        offset += pageSize;
+      }
+
+      userDailyPayments.value = payments;
+    } catch (error) {
+      console.error('Error fetching paid payments by user:', error);
+      $q.notify({ type: 'negative', message: 'Unable to load paid payments by user.' });
+    } finally {
+      userDailyLoading.value = false;
+    }
+  };
+  const fetchBonusPayments = async (rangeStart, rangeEnd) => {
+    const bonuses = [];
+    const pageSize = 1000;
+    let offset = 0;
+
+    while (true) {
+      let query = supabase
+        .from('Bonus')
+        .select('id, DistributorIDNO, BonusDate, BonusValue, Status, PaidDPC')
+        .order('id', { ascending: true })
+        .range(offset, offset + pageSize - 1);
+
+      if (rangeStart) query = query.gte('BonusDate', rangeStart);
+      if (rangeEnd) query = query.lte('BonusDate', rangeEnd);
+
+      const { data, error } = await query;
+      if (error) throw error;
+      bonuses.push(...(data || []));
+      if (!data || data.length < pageSize) break;
+      offset += pageSize;
+    }
+
+    const distributorIds = [...new Set(bonuses.map((bonus) => bonus.DistributorIDNO).filter(Boolean))];
+    const registeredDpcByDistributor = new Map();
+
+    for (let index = 0; index < distributorIds.length; index += 200) {
+      const { data, error } = await supabase
+        .from('Distributors')
+        .select('DistributorIDNO, RegisteredDPC')
+        .in('DistributorIDNO', distributorIds.slice(index, index + 200));
+
+      if (error) throw error;
+      for (const distributor of data || []) {
+        registeredDpcByDistributor.set(distributor.DistributorIDNO, distributor.RegisteredDPC);
+      }
+    }
+
+    return bonuses.map((bonus) => ({
+      ...bonus,
+      RegisteredDPC: registeredDpcByDistributor.get(bonus.DistributorIDNO) || null,
+    }));
+  };
+
+  const fetchSummaryPayments = async () => {
+    if (!startDate.value || !endDate.value) return;
+
+    summaryLoading.value = true;
+    summaryPayments.value = [];
+
+    try {
+      summaryPayments.value = await fetchBonusPayments(startDate.value, endDate.value);
+    } catch (error) {
+      console.error('Error fetching summary payments:', error);
+      $q.notify({ type: 'negative', message: 'Unable to load summary. Confirm the PaidDPC migration has been applied.' });
+    } finally {
+      summaryLoading.value = false;
+    }
+  };
+  const fetchYearlyBonusRecords = async (rangeStart = startDate.value, rangeEnd = endDate.value) => {
+    yearlyBonusPayments.value = [];
+    if (!rangeStart || !rangeEnd) {
+      return;
+    }
+    if (rangeStart > rangeEnd) {
+      $q.notify({ type: 'negative', message: 'Start date must be on or before the end date.' });
+      return;
+    }
+    yearlyBonusLoading.value = true;
+    yearlyBonusLoading.value = true;
+
+    try {
+      yearlyBonusPayments.value = await fetchBonusPayments(rangeStart, rangeEnd);
+    } catch (error) {
+      console.error('Error fetching yearly bonus totals:', error);
+      $q.notify({ type: 'negative', message: 'Unable to load yearly bonus totals.' });
+    } finally {
+      yearlyBonusLoading.value = false;
+    }
+  };
+  const scheduleYearlyBonusRefresh = () => {
+    clearTimeout(yearlyBonusRefreshTimeout);
+    yearlyBonusRefreshTimeout = setTimeout(fetchYearlyBonusRecords, 300);
+  };
+  watch(() => bonusStore.Dpcs, () => {
+    if (reportType.value === 'user-daily' && startDate.value && endDate.value) {
+      fetchUserDailyPayments();
+    }
+  });
 // Prepare table rows with all dates & DPC names
 const tableRows = computed(() => {
   const pivotData = bonusStore.pivotBonusData || {};
@@ -402,10 +841,13 @@ const fetchData2 = async () => {
   }
 
   if (reportType.value === 'summary') {
-    //await bonusStore.fetchBonusData(startDate.value, endDate.value);
-    await bonusStore.fetchBonusSummary(startDate.value, endDate.value);
+    await fetchSummaryPayments();
   } else if (reportType.value === 'daily') {
-    await bonusStore.fetchBonusPivotTable(startDate.value, endDate.value);
+    await fetchDailyPaidPayments();
+  } else if (reportType.value === 'user-daily') {
+    await fetchUserDailyPayments();
+  } else if (reportType.value === 'yearly') {
+    await fetchYearlyBonusRecords();
   } else {
     console.log("Please select a valid report type.");
   }
@@ -423,15 +865,13 @@ const fetchData = async () => {
   }
 
   if (reportType.value === 'summary') {
-    if (bonusStore.departmentType === 'my-department') {
-      await bonusStore.fetchBonusSummary(startDate.value, endDate.value);
-    } else if (bonusStore.departmentType === 'all-dpcs') {
-      await bonusStore.summarizeAll(startDate.value, endDate.value);
-    } else {
-      console.log("Please select a valid department type.");
-    }
+    await fetchSummaryPayments();
   } else if (reportType.value === 'daily') {
-    await bonusStore.fetchBonusPivotTable(startDate.value, endDate.value);
+    await fetchDailyPaidPayments();
+  } else if (reportType.value === 'user-daily') {
+    await fetchUserDailyPayments();
+  } else if (reportType.value === 'yearly') {
+    await fetchYearlyBonusRecords();
   } else {
     console.log("Please select a valid report type.");
   }
@@ -490,12 +930,19 @@ const confirmUpdate = (distributor) => {
 
 const summaryRows = computed(() => {
   const rowsByDpc = new Map();
+  const allowedDpcCodes = new Set(bonusStore.Dpcs.map((dpc) => dpc.dpccode));
 
-  for (const bonus of bonusStore.bonusData) {
-    const dpcName = bonus.dpc_name ?? bonus.dpcname;
-    const bonusDate = bonus.bonus_date ?? bonus.BonusDate;
-    if (!dpcName) continue;
-    let summary = rowsByDpc.get(dpcName);
+  for (const bonus of summaryPayments.value) {
+    const status = String(bonus.Status || '').trim().toLowerCase();
+    if (status !== 'paid' && status !== 'unpaid') continue;
+
+    const dpcCode = status === 'paid'
+      ? bonus.PaidDPC || bonus.RegisteredDPC
+      : bonus.RegisteredDPC;
+    if (!dpcCode || !allowedDpcCodes.has(dpcCode)) continue;
+
+    const dpcName = dpcNameByCode.value[dpcCode] || dpcCode;
+    let summary = rowsByDpc.get(dpcCode);
 
     if (!summary) {
       summary = {
@@ -504,18 +951,16 @@ const summaryRows = computed(() => {
         totalunpaidbonus: new Decimal(0),
         totalbonus: new Decimal(0),
       };
-      rowsByDpc.set(dpcName, summary);
+      rowsByDpc.set(dpcCode, summary);
     }
 
-    summary.totalpaidbonus = summary.totalpaidbonus.plus(
-      convertCurrency(bonus.totalpaidbonus || 0, bonusDate)
-    );
-    summary.totalunpaidbonus = summary.totalunpaidbonus.plus(
-      convertCurrency(bonus.totalunpaidbonus || 0, bonusDate)
-    );
-    summary.totalbonus = summary.totalbonus.plus(
-      convertCurrency(bonus.totalbonus || 0, bonusDate)
-    );
+    const amount = convertCurrency(bonus.BonusValue || 0, bonus.BonusDate);
+    if (status === 'paid') {
+      summary.totalpaidbonus = summary.totalpaidbonus.plus(amount);
+    } else {
+      summary.totalunpaidbonus = summary.totalunpaidbonus.plus(amount);
+    }
+    summary.totalbonus = summary.totalbonus.plus(amount);
   }
 
   return [...rowsByDpc.values()];
@@ -559,7 +1004,15 @@ onMounted(async () => {
   await bonusStore.fetchDPCs(); // Wait until DPCs are fetched
   //console.log("dpcdata", store.Dpcs); // Log after fetching
   bonusStore.selectedDPC = null;
- 
+  yearlyBonusSubscription = supabase
+    .channel('yearly-bonus-report')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'Bonus' }, scheduleYearlyBonusRefresh)
+    .subscribe();
+});
+
+onBeforeUnmount(() => {
+  clearTimeout(yearlyBonusRefreshTimeout);
+  if (yearlyBonusSubscription) supabase.removeChannel(yearlyBonusSubscription);
 });
 </script>
 
@@ -635,5 +1088,60 @@ onMounted(async () => {
 .loading-container {
   display: flex;
   align-items: center;
+}
+.yearly-chart {
+  display: grid;
+  gap: 12px;
+}
+.yearly-chart-row {
+  display: grid;
+  grid-template-columns: 54px minmax(80px, 1fr) minmax(90px, auto);
+  align-items: center;
+  gap: 12px;
+}
+.yearly-chart-year,
+.yearly-chart-total {
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+.yearly-chart-total {
+  text-align: right;
+}
+.yearly-chart-track {
+  display: flex;
+  height: 20px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: #edf0f2;
+}
+.yearly-chart-paid {
+  background: #168b73;
+}
+.yearly-chart-unpaid {
+  background: #e3a329;
+}
+.yearly-legend {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin-right: 5px;
+  border-radius: 2px;
+  vertical-align: -1px;
+}
+.yearly-legend.paid {
+  background: #168b73;
+}
+.yearly-legend.unpaid {
+  background: #e3a329;
+}
+@media (max-width: 520px) {
+  .yearly-chart-row {
+    grid-template-columns: 42px minmax(40px, 1fr) 75px;
+    gap: 8px;
+  }
+  .yearly-chart-year,
+  .yearly-chart-total {
+    font-size: 11px;
+  }
 }
 </style>

@@ -1,8 +1,7 @@
 <template>
   <q-item
     clickable
-    class="text-white"
-    tag="a"
+    :class="route.path === props.link ? 'text-orange-5' : 'text-white'"
     :to="props.link"
   >
     <q-item-section
@@ -20,6 +19,8 @@
 </template>
 
 <script setup>
+import { useRoute } from 'vue-router'
+
 defineOptions({
   name: 'EssentialLink'
 })
@@ -42,4 +43,6 @@ const props = defineProps({
     default: ''
   }
 })
+
+const route = useRoute()
 </script>

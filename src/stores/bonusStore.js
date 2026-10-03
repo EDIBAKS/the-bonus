@@ -6,6 +6,7 @@ export const useBonusStore = defineStore("bonusStore", {
   state: () => ({
     bonuses: [],
     todayPaidBonuses: [],
+    todayPaymentsSubscription: null,
     paidPaymentsDateRange: { startDate: null, endDate: null },
     bonusQuery: { startDate: null, endDate: null, distributorID: null, selectedDpc: null },
     departmentType: 'my-department',  // Default selection
@@ -371,6 +372,13 @@ export const useBonusStore = defineStore("bonusStore", {
       const rangeStart = startDate || endDate || todayKey;
       const rangeEnd = endDate || startDate || todayKey;
       this.paidPaymentsDateRange = { startDate: rangeStart, endDate: rangeEnd };
+      const [endYear, endMonth, endDay] = rangeEnd.split("-").map(Number);
+      const dayAfterEnd = new Date(endYear, endMonth - 1, endDay + 1);
+      const exclusiveEnd = [
+        dayAfterEnd.getFullYear(),
+        String(dayAfterEnd.getMonth() + 1).padStart(2, "0"),
+        String(dayAfterEnd.getDate()).padStart(2, "0"),
+      ].join("-");
       const paidBonuses = [];
       const pageSize = 1000;
       let offset = 0;
@@ -379,10 +387,10 @@ export const useBonusStore = defineStore("bonusStore", {
         while (true) {
           const { data, error } = await supabase
             .from("Bonus")
-            .select("DistributorIDNO, BonusValue, BonusDate, PaymentDate, Status")
+            .select("id, DistributorIDNO, BonusValue, BonusDate, PaymentDate, PaidBy, Status")
             .eq("Status", "Paid")
             .gte("PaymentDate", `${rangeStart}T00:00:00`)
-            .lt("PaymentDate", `${rangeEnd}T23:59:59.999999`)
+            .lt("PaymentDate", `${exclusiveEnd}T00:00:00`)
             .range(offset, offset + pageSize - 1);
 
           if (error) throw error;
@@ -413,6 +421,32 @@ export const useBonusStore = defineStore("bonusStore", {
       } catch (error) {
         console.error("Error fetching today's paid bonuses:", error);
       }
+    },
+
+    async refreshTodayPaidBonuses() {
+      const today = new Date();
+      const todayKey = [today.getFullYear(), String(today.getMonth() + 1).padStart(2, "0"), String(today.getDate()).padStart(2, "0")].join("-");
+      await this.fetchPaidBonusesByPaymentDate(todayKey, todayKey);
+    },
+
+    subscribeToTodayPaidBonuses() {
+      if (this.todayPaymentsSubscription) return;
+
+      this.todayPaymentsSubscription = supabase
+        .channel("TodayPaidBonusUpdates")
+        .on(
+          "postgres_changes",
+          { event: "*", schema: "public", table: "Bonus" },
+          () => this.refreshTodayPaidBonuses()
+        )
+        .subscribe();
+    },
+
+    unsubscribeFromTodayPaidBonuses() {
+      if (!this.todayPaymentsSubscription) return;
+
+      supabase.removeChannel(this.todayPaymentsSubscription);
+      this.todayPaymentsSubscription = null;
     },
     
 
@@ -628,7 +662,9 @@ async fetchBonusAggregate(startDate, endDate) {
     },
     async updateStatus(id) {
       const now = new Date();
-      const currentDateTime = now.toISOString().split("T")[0] + " " + now.toTimeString().split(" ")[0];
+      const localDate = [now.getFullYear(), String(now.getMonth() + 1).padStart(2, "0"), String(now.getDate()).padStart(2, "0")].join("-");
+      const localTime = [now.getHours(), now.getMinutes(), now.getSeconds()].map((value) => String(value).padStart(2, "0")).join(":");
+      const currentDateTime = `${localDate} ${localTime}`;
     
       const storeAuth = useStoreAuth();
       const paidBy = storeAuth.userDetails?.username || "Unknown";
@@ -641,12 +677,34 @@ async fetchBonusAggregate(startDate, endDate) {
       if (index !== -1) {
         const previousBonus = { ...this.bonuses[index] }; // Save previous state for rollback
     
+        const todayPaymentIndex = this.todayPaidBonuses.findIndex((bonus) => bonus.id === id);
+        const previousTodayPayment = todayPaymentIndex >= 0
+          ? { ...this.todayPaidBonuses[todayPaymentIndex] }
+          : null;
+        const localToday = [now.getFullYear(), String(now.getMonth() + 1).padStart(2, "0"), String(now.getDate()).padStart(2, "0")].join("-");
+        const todayPayment = {
+          id,
+          DistributorIDNO: previousBonus.DistributorIDNO,
+          BonusValue: previousBonus.BonusValue,
+          BonusDate: previousBonus.BonusDate,
+          PaymentDate: currentDateTime,
+          Status: "Paid",
+          RegisteredDPC: previousBonus.RegisteredDPC,
+        };
+
         // Immediate local update
         this.bonuses[index].Status = "Paid";
         this.bonuses[index].PaymentDate = currentDateTime;
         this.bonuses[index].PaidBy = paidBy;
         this.bonuses[index].PickedBy = takenBy; // ✅ Use `this.takenBy`
         localStorage.setItem("bonuses", JSON.stringify(this.bonuses));
+        if (localToday === currentDateTime.slice(0, 10)) {
+          if (todayPaymentIndex >= 0) {
+            this.todayPaidBonuses[todayPaymentIndex] = todayPayment;
+          } else {
+            this.todayPaidBonuses.push(todayPayment);
+          }
+        }
     
         // Attempt update in Supabase (in background)
         const { error } = await supabase
@@ -666,6 +724,12 @@ async fetchBonusAggregate(startDate, endDate) {
           // Rollback local changes if Supabase update fails
           this.bonuses[index] = previousBonus;
           localStorage.setItem("bonuses", JSON.stringify(this.bonuses)); // Restore previous state in localStorage
+          this.todayPaidBonuses = this.todayPaidBonuses.filter((bonus) => bonus.id !== id);
+          if (previousTodayPayment) {
+            this.todayPaidBonuses.splice(todayPaymentIndex, 0, previousTodayPayment);
+          }
+        } else {
+          await this.refreshTodayPaidBonuses();
         }
       }
     },
@@ -721,11 +785,19 @@ async fetchBonusAggregate(startDate, endDate) {
       if (index !== -1) {
         const previousBonus = { ...this.bonuses[index] }; // Save previous state for rollback
     
+        const todayPaymentIndex = this.todayPaidBonuses.findIndex((bonus) => bonus.id === id);
+        const previousTodayPayment = todayPaymentIndex >= 0
+          ? { ...this.todayPaidBonuses[todayPaymentIndex] }
+          : null;
+
         // Immediate local update (optimistic update)
         this.bonuses[index].Status = "UnPaid";
         this.bonuses[index].PaymentDate = currentDateTime;
         this.bonuses[index].PaidBy = "";
         localStorage.setItem('bonuses', JSON.stringify(this.bonuses));
+        if (todayPaymentIndex >= 0) {
+          this.todayPaidBonuses.splice(todayPaymentIndex, 1);
+        }
     
         // Attempt update in Supabase (in the background)
         const { error } = await supabase
@@ -738,7 +810,12 @@ async fetchBonusAggregate(startDate, endDate) {
     
           // Rollback local changes if Supabase update fails
           this.bonuses[index] = previousBonus;
+          if (previousTodayPayment && !this.todayPaidBonuses.some((bonus) => bonus.id === id)) {
+            this.todayPaidBonuses.splice(todayPaymentIndex, 0, previousTodayPayment);
+          }
           localStorage.setItem('bonuses', JSON.stringify(this.bonuses)); // Restore previous state in localStorage
+        } else {
+          await this.refreshTodayPaidBonuses();
         }
       }
     },
