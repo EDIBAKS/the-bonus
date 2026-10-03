@@ -1,6 +1,7 @@
 <template>
   <q-item
     clickable
+    tag="router-link"
     :class="route.path === props.link ? 'text-orange-5' : 'text-white'"
     :to="props.link"
   >

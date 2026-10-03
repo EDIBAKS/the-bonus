@@ -5,9 +5,9 @@ const routes = [
      
      children: [
       { path: '', component: () => import('pages/BonusPage.vue') }, // Default page
-       { path: '/settings', component: () => import('pages/PageSettings.vue') },
-       { path: '/users', component: () => import('pages/PageUserManager.vue') },
-       { path: '/reports', component: () => import('pages/ReportsPage.vue') },
+       { path: 'settings', component: () => import('pages/PageSettings.vue') },
+       { path: 'users', component: () => import('pages/PageUserManager.vue') },
+       { path: 'reports', component: () => import('pages/ReportsPage.vue') },
     
      ]
    },
