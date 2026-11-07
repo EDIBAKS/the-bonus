@@ -1,5 +1,14 @@
 import Decimal from 'decimal.js';
 
+export function filterMemberBonusRows(rows, search) {
+  const query = (search || '').trim().toLocaleLowerCase();
+  return query ? rows.filter((row) => row.name.toLocaleLowerCase().includes(query)) : rows;
+}
+
+export function compareUnpaidMonths(left, right) {
+  return left.join(',').localeCompare(right.join(','));
+}
+
 export function buildMemberBonusRows(bonuses, allowedDpcCodes, allDpcs, convertCurrency) {
   const members = new Map();
 

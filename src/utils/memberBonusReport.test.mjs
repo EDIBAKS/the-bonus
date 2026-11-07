@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import Decimal from 'decimal.js';
-import { buildMemberBonusRows } from './memberBonusReport.mjs';
+import { buildMemberBonusRows, filterMemberBonusRows, compareUnpaidMonths } from './memberBonusReport.mjs';
 
 const convertCurrency = (amount, date) =>
   new Decimal(amount).mul(date < '2026-08-01' ? 10 : 20);
@@ -54,4 +54,38 @@ test('unpaid month badges are unique, sorted by year, and disappear when their b
   assert.equal(build()[0].paid.toString(), '80');
   bonuses[1].Status = 'Paid';
   assert.equal(build().length, 0);
+});
+
+test('filters member names case-insensitively without matching other columns', () => {
+  const rows = [
+    { name: 'Alice Smith', id: 'BOB' },
+    { name: 'Bob Jones', id: 'ALICE' },
+    { name: 'Unknown member', id: '' },
+  ];
+  assert.deepEqual(filterMemberBonusRows(rows, '  aLiCe  '), [rows[0]]);
+  assert.deepEqual(filterMemberBonusRows(rows, 'jones'), [rows[1]]);
+  assert.deepEqual(filterMemberBonusRows(rows, 'missing'), []);
+  assert.deepEqual(filterMemberBonusRows(rows, '  '), rows);
+  assert.deepEqual(filterMemberBonusRows(rows, null), rows);
+});
+
+test('sorts unpaid month lists chronologically, including multiple and missing months', () => {
+  const months = [
+    ['2026-01'],
+    ['2025-12', '2026-02'],
+    [],
+    ['2025-12'],
+  ];
+  assert.deepEqual([...months].sort(compareUnpaidMonths), [
+    [],
+    ['2025-12'],
+    ['2025-12', '2026-02'],
+    ['2026-01'],
+  ]);
+  assert.deepEqual([...months].sort((left, right) => compareUnpaidMonths(right, left)), [
+    ['2026-01'],
+    ['2025-12', '2026-02'],
+    ['2025-12'],
+    [],
+  ]);
 });

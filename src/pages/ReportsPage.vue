@@ -116,16 +116,27 @@
           <q-banner v-if="memberRealtimeError" dense class="bg-orange-1 text-dark q-mx-md q-mb-sm" role="status">
             Live updates are unavailable. The report refreshes periodically and when you return to this page.
           </q-banner>
+          <q-input
+            v-model="memberBonusSearch"
+            label="Search member names"
+            filled
+            dense
+            clearable
+            class="q-mx-md q-mb-sm"
+          />
+          <div class="text-caption text-grey-7 q-px-md q-pb-sm">
+            Click a column heading to change the sort order. Unpaid months sort chronologically, starting with the earliest month.
+          </div>
           <q-table
             flat
             bordered
             dense
             row-key="key"
-            :rows="memberBonusRows"
+            :rows="filteredMemberBonusRows"
             :columns="memberBonusColumns"
             :loading="memberBonusLoading"
             :rows-per-page-options="[0]"
-            :pagination="{ rowsPerPage: 0 }"
+            v-model:pagination="memberBonusPagination"
           >
             <template v-slot:body-cell-unpaidMonths="props">
               <q-td :props="props">
@@ -140,7 +151,9 @@
             </template>
             <template v-slot:no-data>
               <div class="full-width row flex-center text-grey q-pa-md">
-                No members with unpaid bonuses found for the selected bonus dates.
+                {{ memberBonusRows.length && memberBonusSearch?.trim()
+                  ? 'No member names match your search.'
+                  : 'No members with unpaid bonuses found for the selected bonus dates.' }}
               </div>
             </template>
           </q-table>
@@ -356,7 +369,7 @@ import { useCurrency } from 'src/composables/useCurrency';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import Decimal from 'decimal.js';
-import { buildMemberBonusRows } from 'src/utils/memberBonusReport.mjs';
+import { buildMemberBonusRows, filterMemberBonusRows, compareUnpaidMonths } from 'src/utils/memberBonusReport.mjs';
 import departmenttype from '../components/DepartmentTypeSelector.vue'
 import { useQuasar } from "quasar";
 const startDate = ref('');
@@ -367,6 +380,8 @@ const dailyPaidLoading = ref(false);
 const userDailyPayments = ref([]);
 const userDailyLoading = ref(false);
 const memberBonusPayments = ref([]);
+const memberBonusSearch = ref('');
+const memberBonusPagination = ref({ rowsPerPage: 0 });
 const memberBonusLoading = ref(false);
 const memberBonusError = ref('');
 const memberRealtimeError = ref(false);
@@ -491,10 +506,16 @@ const memberBonusRows = computed(() => buildMemberBonusRows(
   isAllDpcsSelected.value,
   convertCurrency
 ));
+const filteredMemberBonusRows = computed(() =>
+  filterMemberBonusRows(memberBonusRows.value, memberBonusSearch.value)
+);
 const memberBonusColumns = [
   { name: 'id', label: 'Member ID', field: 'id', align: 'left', sortable: true },
   { name: 'name', label: 'Member Name', field: 'name', align: 'left', sortable: true },
-  { name: 'unpaidMonths', label: 'Unpaid Months (MM/YYYY)', field: 'unpaidMonths', align: 'left' },
+  {
+    name: 'unpaidMonths', label: 'Unpaid Months (MM/YYYY)', field: 'unpaidMonths', align: 'left',
+    sortable: true, sort: compareUnpaidMonths,
+  },
   {
     name: 'owed', label: 'Total Payment Owed', field: 'owed', align: 'right', sortable: true,
     format: formatYearlyCurrency, sort: (left, right) => left.comparedTo(right),
