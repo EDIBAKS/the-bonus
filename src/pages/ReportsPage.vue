@@ -60,6 +60,9 @@
           </div>
         </template>
         <template v-if="reportType === 'user-daily'">
+          <q-banner rounded class="bg-blue-1 text-blue-10 q-ma-md">
+            Payments shown were made during the selected period. They may include arrears for bonuses from earlier months, not just bonuses for the selected month.
+          </q-banner>
           <div class="row items-center justify-between q-pa-md">
             <span class="text-caption text-grey-7">Amounts: {{ currencyType === 'LC' ? 'Local Currency' : 'USD' }}</span>
             <q-spinner v-if="userDailyLoading" color="primary" size="sm" />
@@ -96,6 +99,49 @@
                   {{ formatUserDailyAmount(userDailyTotals.totalPay) }}
                 </q-td>
               </q-tr>
+            </template>
+          </q-table>
+        </template>
+        <template v-if="reportType === 'member-unpaid'">
+          <div class="row items-center justify-between q-pa-md">
+            <departmenttype />
+            <span class="text-caption text-grey-7">Amounts: {{ currencyType === 'LC' ? 'Local Currency' : 'USD' }}</span>
+          </div>
+          <div class="text-caption text-grey-7 q-px-md q-pb-sm">
+            Bonuses are selected by bonus date. Owed and paid amounts reflect their current status, not the date of payment. Members are scoped by their current registered DPC. Unpaid months are shown as month/year within the selected dates.
+          </div>
+          <q-banner v-if="memberBonusError" dense class="bg-red-1 text-negative q-mx-md q-mb-sm" role="alert">
+            {{ memberBonusError }}
+          </q-banner>
+          <q-banner v-if="memberRealtimeError" dense class="bg-orange-1 text-dark q-mx-md q-mb-sm" role="status">
+            Live updates are unavailable. The report refreshes periodically and when you return to this page.
+          </q-banner>
+          <q-table
+            flat
+            bordered
+            dense
+            row-key="key"
+            :rows="memberBonusRows"
+            :columns="memberBonusColumns"
+            :loading="memberBonusLoading"
+            :rows-per-page-options="[0]"
+            :pagination="{ rowsPerPage: 0 }"
+          >
+            <template v-slot:body-cell-unpaidMonths="props">
+              <q-td :props="props">
+                <q-badge
+                  v-for="month in props.row.unpaidMonths"
+                  :key="month"
+                  color="orange-8"
+                  class="q-mr-xs q-my-xs"
+                  :label="`${month.slice(5, 7)}/${month.slice(0, 4)}`"
+                />
+              </q-td>
+            </template>
+            <template v-slot:no-data>
+              <div class="full-width row flex-center text-grey q-pa-md">
+                No members with unpaid bonuses found for the selected bonus dates.
+              </div>
             </template>
           </q-table>
         </template>
@@ -310,6 +356,7 @@ import { useCurrency } from 'src/composables/useCurrency';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import Decimal from 'decimal.js';
+import { buildMemberBonusRows } from 'src/utils/memberBonusReport.mjs';
 import departmenttype from '../components/DepartmentTypeSelector.vue'
 import { useQuasar } from "quasar";
 const startDate = ref('');
@@ -319,6 +366,14 @@ const dailyPaidPayments = ref([]);
 const dailyPaidLoading = ref(false);
 const userDailyPayments = ref([]);
 const userDailyLoading = ref(false);
+const memberBonusPayments = ref([]);
+const memberBonusLoading = ref(false);
+const memberBonusError = ref('');
+const memberRealtimeError = ref(false);
+let memberBonusRequest = 0;
+let memberBonusLoaded = false;
+let memberBonusRefreshTimeout = null;
+let memberBonusRefreshInterval = null;
 const summaryPayments = ref([]);
 const summaryLoading = ref(false);
 const yearlyBonusPayments = ref([]);
@@ -389,6 +444,7 @@ const totalPerDpc = ref({});
 const reportOptions = [
   { label: 'Daily', value: 'daily' },
   { label: 'Paid by User per Day', value: 'user-daily' },
+  { label: 'Members with Unpaid Bonuses', value: 'member-unpaid' },
   { label: 'Summary', value: 'summary' },
   { label: 'Paid and Unpaid by Year', value: 'yearly' },
   { label: 'Distributors', value: 'distributors' }
@@ -429,6 +485,25 @@ const allowedDpcCodes = computed(() => new Set(bonusStore.Dpcs.map((dpc) => dpc.
 const isAllDpcsSelected = computed(() => bonusStore.departmentType === 'all-dpcs');
 const paymentDpcIsInScope = (dpcCode) =>
   allowedDpcCodes.value.has(dpcCode) || (isAllDpcsSelected.value && !dpcCode);
+const memberBonusRows = computed(() => buildMemberBonusRows(
+  memberBonusPayments.value,
+  allowedDpcCodes.value,
+  isAllDpcsSelected.value,
+  convertCurrency
+));
+const memberBonusColumns = [
+  { name: 'id', label: 'Member ID', field: 'id', align: 'left', sortable: true },
+  { name: 'name', label: 'Member Name', field: 'name', align: 'left', sortable: true },
+  { name: 'unpaidMonths', label: 'Unpaid Months (MM/YYYY)', field: 'unpaidMonths', align: 'left' },
+  {
+    name: 'owed', label: 'Total Payment Owed', field: 'owed', align: 'right', sortable: true,
+    format: formatYearlyCurrency, sort: (left, right) => left.comparedTo(right),
+  },
+  {
+    name: 'paid', label: 'Total Paid', field: 'paid', align: 'right', sortable: true,
+    format: formatYearlyCurrency, sort: (left, right) => left.comparedTo(right),
+  },
+];
 const scopedDailyPaidPayments = computed(() => dailyPaidPayments.value.filter(
   (payment) => paymentDpcIsInScope(payment.PaidDPC)
 ));
@@ -645,25 +720,71 @@ const allDates = computed(() => {
     }
 
     const distributorIds = [...new Set(bonuses.map((bonus) => bonus.DistributorIDNO).filter(Boolean))];
-    const registeredDpcByDistributor = new Map();
+    const distributorById = new Map();
 
     for (let index = 0; index < distributorIds.length; index += 200) {
       const { data, error } = await supabase
         .from('Distributors')
-        .select('DistributorIDNO, RegisteredDPC')
+        .select('DistributorIDNO, DistributorNames, RegisteredDPC')
         .in('DistributorIDNO', distributorIds.slice(index, index + 200));
 
       if (error) throw error;
       for (const distributor of data || []) {
-        registeredDpcByDistributor.set(distributor.DistributorIDNO, distributor.RegisteredDPC);
+        distributorById.set(distributor.DistributorIDNO, distributor);
       }
     }
 
     return bonuses.map((bonus) => ({
       ...bonus,
-      RegisteredDPC: registeredDpcByDistributor.get(bonus.DistributorIDNO) || null,
+      RegisteredDPC: distributorById.get(bonus.DistributorIDNO)?.RegisteredDPC || null,
+      DistributorNames: distributorById.get(bonus.DistributorIDNO)?.DistributorNames || null,
     }));
   };
+
+  const fetchMemberBonusPayments = async () => {
+    const request = ++memberBonusRequest;
+    memberBonusError.value = '';
+    if (!startDate.value || !endDate.value || startDate.value > endDate.value) {
+      memberBonusLoading.value = false;
+      memberBonusError.value = 'Select a valid start and end date.';
+      return;
+    }
+
+    memberBonusLoaded = true;
+    memberBonusLoading.value = true;
+    try {
+      const payments = await fetchBonusPayments(startDate.value, endDate.value);
+      if (request === memberBonusRequest) memberBonusPayments.value = payments;
+    } catch (error) {
+      if (request === memberBonusRequest) {
+        console.error('Error fetching member bonus totals:', error);
+        memberBonusError.value = 'Unable to refresh member bonus totals. The displayed amounts may be out of date; use Filter to retry.';
+      }
+    } finally {
+      if (request === memberBonusRequest) memberBonusLoading.value = false;
+    }
+  };
+  watch([startDate, endDate], () => {
+    memberBonusRequest += 1;
+    memberBonusLoaded = false;
+    clearTimeout(memberBonusRefreshTimeout);
+    memberBonusPayments.value = [];
+    memberBonusLoading.value = false;
+    memberBonusError.value = '';
+  }, { flush: 'sync' });
+
+  const scheduleMemberBonusRefresh = () => {
+    if (reportType.value !== 'member-unpaid' || !memberBonusLoaded) return;
+    memberBonusRequest += 1;
+    clearTimeout(memberBonusRefreshTimeout);
+    memberBonusRefreshTimeout = setTimeout(fetchMemberBonusPayments, 150);
+  };
+  const refreshMemberBonusOnFocus = () => {
+    if (document.visibilityState === 'visible') scheduleMemberBonusRefresh();
+  };
+  watch(reportType, (type) => {
+    if (type === 'member-unpaid') scheduleMemberBonusRefresh();
+  });
 
   const fetchSummaryPayments = async () => {
     if (!startDate.value || !endDate.value) return;
@@ -844,6 +965,8 @@ const fetchData2 = async () => {
     await fetchDailyPaidPayments();
   } else if (reportType.value === 'user-daily') {
     await fetchUserDailyPayments();
+  } else if (reportType.value === 'member-unpaid') {
+    await fetchMemberBonusPayments();
   } else if (reportType.value === 'yearly') {
     await fetchYearlyBonusRecords();
   } else {
@@ -853,7 +976,7 @@ const fetchData2 = async () => {
 
 const fetchData = async () => {
   if (!startDate.value || !endDate.value) {
-    console.log("Please select a valid date range.");
+    $q.notify({ type: 'negative', message: 'Select a valid start and end date.' });
     return;
   }
 
@@ -868,6 +991,8 @@ const fetchData = async () => {
     await fetchDailyPaidPayments();
   } else if (reportType.value === 'user-daily') {
     await fetchUserDailyPayments();
+  } else if (reportType.value === 'member-unpaid') {
+    await fetchMemberBonusPayments();
   } else if (reportType.value === 'yearly') {
     await fetchYearlyBonusRecords();
   } else {
@@ -998,16 +1123,35 @@ watch(() => bonusStore.selectedDPC, (newDPC) => {
 
 
 onMounted(async () => {
+  yearlyBonusSubscription = supabase
+    .channel('yearly-bonus-report')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'Bonus' }, () => {
+      scheduleYearlyBonusRefresh();
+      scheduleMemberBonusRefresh();
+    })
+    .subscribe((status, error) => {
+      if (status === 'SUBSCRIBED') {
+        memberRealtimeError.value = false;
+        scheduleMemberBonusRefresh();
+      } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+        console.error('Bonus report live updates unavailable:', status, error);
+        memberRealtimeError.value = true;
+      }
+    });
+  window.addEventListener('focus', refreshMemberBonusOnFocus);
+  document.addEventListener('visibilitychange', refreshMemberBonusOnFocus);
+  memberBonusRefreshInterval = setInterval(scheduleMemberBonusRefresh, 60 * 1000);
   await bonusStore.fetchDPCs(); // Wait until DPCs are fetched
   //console.log("dpcdata", store.Dpcs); // Log after fetching
   bonusStore.selectedDPC = null;
-  yearlyBonusSubscription = supabase
-    .channel('yearly-bonus-report')
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'Bonus' }, scheduleYearlyBonusRefresh)
-    .subscribe();
 });
 
 onBeforeUnmount(() => {
+  memberBonusRequest += 1;
+  clearTimeout(memberBonusRefreshTimeout);
+  clearInterval(memberBonusRefreshInterval);
+  window.removeEventListener('focus', refreshMemberBonusOnFocus);
+  document.removeEventListener('visibilitychange', refreshMemberBonusOnFocus);
   clearTimeout(yearlyBonusRefreshTimeout);
   if (yearlyBonusSubscription) supabase.removeChannel(yearlyBonusSubscription);
 });

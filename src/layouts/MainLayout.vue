@@ -22,6 +22,16 @@
       
     </div>
   </q-toolbar>
+      <q-banner
+        v-if="storeAuth.inactivitySeconds"
+        dense
+        class="bg-orange-2 text-dark text-center"
+        role="status"
+        aria-live="polite"
+      >
+        You will be logged out in {{ storeAuth.inactivitySeconds }} seconds due to inactivity.
+        Move your mouse, click, or press a key to stay signed in.
+      </q-banner>
     </q-header>
 
     <q-drawer v-model="leftDrawerOpen" class="bg-primary" :width="200" :breakpoint="767" show-if-above bordered>
@@ -201,7 +211,9 @@ const refreshTodayPayments = () => {
   return bonusStore.fetchPaidBonusesByPaymentDate(today, today)
 }
 
-watch(() => storeAuth.userDetails.role, async (role) => {
+watch(() => storeAuth.userDetails.role, async (role, previousRole, onCleanup) => {
+  let cancelled = false
+  onCleanup(() => { cancelled = true })
   clearInterval(dailyPaymentsRefreshTimer)
 
   if (role !== 'SuperAdmin') {
@@ -212,6 +224,7 @@ watch(() => storeAuth.userDetails.role, async (role) => {
 
   bonusStore.subscribeToTodayPaidBonuses()
   await refreshTodayPayments()
+  if (cancelled) return
   dailyPaymentsRefreshTimer = setInterval(refreshTodayPayments, 5 * 60 * 1000)
 }, { immediate: true })
 

@@ -1,5 +1,5 @@
 <template>
-  <router-view />
+  <router-view v-if="storeAuth.isAuthenticated || $route.path === '/auth'" />
 </template>
 
 <script setup>
@@ -20,7 +20,6 @@ const storeAuth= useStoreAuth(),
       router = useRouter()
 
 onMounted(() => {
-    storeAuth.init()
   storeSettings.loadSettings()
   
 

@@ -42,6 +42,9 @@ const totalPerDpc = computed(() => {
 const grandTotal = computed(() => {
   return Object.values(totalPerDpc.value).reduce((sum, val) => sum.plus(val), new Decimal(0));
 });
+const displayGrandTotal = computed(() => props.payments
+  ? grandTotal.value
+  : convertCurrency(grandTotal.value));
 const formatAmount = (amount) => amount.toDecimalPlaces(2).toNumber().toLocaleString(undefined, {
   minimumFractionDigits: 2,
   maximumFractionDigits: 2,
@@ -73,7 +76,7 @@ const formatAmount = (amount) => amount.toDecimalPlaces(2).toNumber().toLocaleSt
       <tr class="total-row">
   <td colspan="100%">
     <div class="text-right q-pa-sm grand-total-text">
-      Grand Total: <strong>{{ formatAmount(convertCurrency(grandTotal)) }}</strong>
+      Grand Total: <strong>{{ formatAmount(displayGrandTotal) }}</strong>
     </div>
   </td>
 </tr>

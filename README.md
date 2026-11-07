@@ -20,5 +20,21 @@ quasar dev
 quasar build
 ```
 
+### Session inactivity
+Authenticated sessions expire after five minutes without activity. A countdown appears
+for the final minute; mouse, keyboard, touch, click, and scroll activity resets it.
+Activity is shared between tabs in the same browser. After expiry the app returns to
+the login screen even if the sign-out request fails.
+
+The unpaid members report listens for changes to the Supabase `Bonus` table. Enable
+that table in the `supabase_realtime` publication and allow the signed-in users to
+receive its changes for immediate updates. The report also refreshes on focus and
+every minute while open.
+
+Run the inactivity and authentication tests with:
+```bash
+node --experimental-vm-modules --test src/stores/storeAuth.test.mjs src/utils/inactivityTracker.test.mjs
+```
+
 ### Customize the configuration
 See [Configuring quasar.config.js](https://v2.quasar.dev/quasar-cli-vite/quasar-config-js).
