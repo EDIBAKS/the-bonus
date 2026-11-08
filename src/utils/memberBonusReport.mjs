@@ -9,6 +9,17 @@ export function compareUnpaidMonths(left, right) {
   return left.join(',').localeCompare(right.join(','));
 }
 
+export function memberBonusTotals(rows) {
+  return rows.reduce((totals, row) => ({
+    owed: totals.owed.plus(row.owed),
+    paid: totals.paid.plus(row.paid),
+  }), { owed: new Decimal(0), paid: new Decimal(0) });
+}
+
+export function formatUnpaidMonths(months) {
+  return months.map((month) => `${month.slice(5, 7)}/${month.slice(0, 4)}`).join(', ');
+}
+
 export function buildMemberBonusRows(bonuses, allowedDpcCodes, allDpcs, convertCurrency) {
   const members = new Map();
 

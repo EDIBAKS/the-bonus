@@ -253,6 +253,11 @@
 
       <q-spinner v-if="store.loading" class="q-mt-md" color="primary" size="lg" />
     </q-card>
+    <q-page-scroller position="bottom-right" :scroll-offset="300" :offset="[18, 18]" class="bonus-scroll-top">
+      <q-btn fab icon="keyboard_arrow_up" color="primary" aria-label="Back to top">
+        <q-tooltip>Back to top</q-tooltip>
+      </q-btn>
+    </q-page-scroller>
   </q-page>
 </template>
 
@@ -671,6 +676,12 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+@media print {
+  .bonus-scroll-top {
+    display: none;
+  }
+}
+
 .search-input {
   width: 100%;
   padding: 10px;

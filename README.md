@@ -31,6 +31,11 @@ that table in the `supabase_realtime` publication and allow the signed-in users 
 receive its changes for immediate updates. The report also refreshes on focus and
 every minute while open.
 
+The unpaid members report shows paid and owed grand totals for the currently
+filtered members. Its Excel and landscape PDF exports include those totals and
+preserve the current member search, DPC scope, currency, and table sort order.
+The floating arrow on the bonus and reports pages returns to the top after scrolling down.
+
 Run the inactivity and authentication tests with:
 ```bash
 node --experimental-vm-modules --test src/stores/storeAuth.test.mjs src/utils/inactivityTracker.test.mjs

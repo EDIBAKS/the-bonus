@@ -1,7 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import Decimal from 'decimal.js';
-import { buildMemberBonusRows, filterMemberBonusRows, compareUnpaidMonths } from './memberBonusReport.mjs';
+import { buildMemberBonusRows, filterMemberBonusRows, compareUnpaidMonths, memberBonusTotals, formatUnpaidMonths } from './memberBonusReport.mjs';
+import { createMemberBonusPdf, createMemberBonusWorkbook } from './memberBonusExport.mjs';
+import ExcelJS from 'exceljs';
 
 const convertCurrency = (amount, date) =>
   new Decimal(amount).mul(date < '2026-08-01' ? 10 : 20);
@@ -88,4 +90,59 @@ test('sorts unpaid month lists chronologically, including multiple and missing m
     ['2025-12'],
     [],
   ]);
+});
+
+test('grand totals follow the filtered rows and retain decimal precision', () => {
+  const rows = [
+    { name: 'Alice', owed: new Decimal('0.1'), paid: new Decimal('1.23') },
+    { name: 'Alice Smith', owed: new Decimal('0.2'), paid: new Decimal('2.34') },
+    { name: 'Bob', owed: new Decimal('50'), paid: new Decimal('60') },
+  ];
+  const totals = memberBonusTotals(filterMemberBonusRows(rows, 'alice'));
+  assert.equal(totals.owed.toString(), '0.3');
+  assert.equal(totals.paid.toString(), '3.57');
+  assert.equal(memberBonusTotals([]).owed.toString(), '0');
+  assert.equal(memberBonusTotals([]).paid.toString(), '0');
+  assert.equal(formatUnpaidMonths(['2025-12', '2026-01']), '12/2025, 01/2026');
+});
+
+test('Excel export preserves supplied row order, text, numeric amounts and filtered totals', async () => {
+  const rows = [
+    { id: '001', name: '=Alice', unpaidMonths: ['2026-01', '2026-02'], owed: new Decimal('0.1'), paid: new Decimal('1.23') },
+    { id: '002', name: 'Bob', unpaidMonths: ['2025-12'], owed: new Decimal('0.2'), paid: new Decimal('2.34') },
+  ];
+  const buffer = await createMemberBonusWorkbook(rows, {
+    startDate: '2025-12-01', endDate: '2026-02-28', currency: 'USD', search: 'test',
+  });
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(buffer);
+  const sheet = workbook.getWorksheet('Unpaid Members');
+  assert.equal(sheet.pageSetup.orientation, 'landscape');
+  assert.equal(sheet.getCell('A6').value, '001');
+  assert.equal(sheet.getCell('B6').value, '=Alice');
+  assert.equal(sheet.getCell('C6').value, '01/2026, 02/2026');
+  assert.equal(sheet.getCell('D6').value, 0.1);
+  assert.equal(sheet.getCell('A7').value, '002');
+  assert.equal(sheet.getCell('A8').value, 'Grand Total');
+  assert.equal(sheet.getCell('D8').value, 0.3);
+  assert.equal(sheet.getCell('E8').value, 3.57);
+  assert.equal(sheet.getCell('D8').numFmt, '#,##0.00');
+  assert.equal(sheet.getCell('A4').value, 'Member search: test');
+});
+
+test('PDF export is landscape and preserves order and totals across pages', () => {
+  const rows = Array.from({ length: 100 }, (_, index) => ({
+    id: String(100 - index), name: `Member ${index}`, unpaidMonths: ['2026-01'],
+    owed: new Decimal('0.1'), paid: new Decimal('0.2'),
+  }));
+  const columns = ['Member ID', 'Member Name', 'Unpaid Months', 'Owed', 'Paid'].map((label) => ({ label }));
+  const doc = createMemberBonusPdf(rows, {
+    startDate: '2026-01-01', endDate: '2026-01-31', currency: 'USD', search: '',
+  }, columns, (amount) => amount.toFixed(2));
+  assert.ok(doc.internal.pageSize.getWidth() > doc.internal.pageSize.getHeight());
+  assert.ok(doc.getNumberOfPages() > 1);
+  assert.equal(doc.lastAutoTable.body[0].cells[0].text[0], '100');
+  assert.equal(doc.lastAutoTable.body[99].cells[0].text[0], '1');
+  assert.equal(doc.lastAutoTable.foot[0].cells[3].text[0], '10.00');
+  assert.equal(doc.lastAutoTable.foot[0].cells[4].text[0], '20.00');
 });

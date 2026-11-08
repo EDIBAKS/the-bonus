@@ -106,6 +106,16 @@
           <div class="row items-center justify-between q-pa-md">
             <departmenttype />
             <span class="text-caption text-grey-7">Amounts: {{ currencyType === 'LC' ? 'Local Currency' : 'USD' }}</span>
+            <div class="q-gutter-sm">
+              <q-btn flat dense round icon="table_view" color="positive" aria-label="Export unpaid members to Excel"
+                :disable="memberBonusLoading || !filteredMemberBonusRows.length" @click="exportMemberBonusExcel">
+                <q-tooltip>Export to Excel</q-tooltip>
+              </q-btn>
+              <q-btn flat dense round icon="picture_as_pdf" color="red" aria-label="Export unpaid members to PDF"
+                :disable="memberBonusLoading || !filteredMemberBonusRows.length" @click="exportMemberBonusPdf">
+                <q-tooltip>Export to PDF</q-tooltip>
+              </q-btn>
+            </div>
           </div>
           <div class="text-caption text-grey-7 q-px-md q-pb-sm">
             Bonuses are selected by bonus date. Owed and paid amounts reflect their current status, not the date of payment. Members are scoped by their current registered DPC. Unpaid months are shown as month/year within the selected dates.
@@ -128,6 +138,7 @@
             Click a column heading to change the sort order. Unpaid months sort chronologically, starting with the earliest month.
           </div>
           <q-table
+            ref="memberBonusTable"
             flat
             bordered
             dense
@@ -155,6 +166,13 @@
                   ? 'No member names match your search.'
                   : 'No members with unpaid bonuses found for the selected bonus dates.' }}
               </div>
+            </template>
+            <template v-slot:bottom-row>
+              <q-tr class="bg-grey-2 text-weight-bold">
+                <q-td colspan="3">Grand Total</q-td>
+                <q-td class="text-right">{{ formatYearlyCurrency(filteredMemberBonusTotals.owed) }}</q-td>
+                <q-td class="text-right">{{ formatYearlyCurrency(filteredMemberBonusTotals.paid) }}</q-td>
+              </q-tr>
             </template>
           </q-table>
         </template>
@@ -355,6 +373,11 @@
 
       </q-card>
     </q-card>
+    <q-page-scroller position="bottom-right" :scroll-offset="300" :offset="[18, 18]" class="report-scroll-top">
+      <q-btn fab icon="keyboard_arrow_up" color="primary" aria-label="Back to top">
+        <q-tooltip>Back to top</q-tooltip>
+      </q-btn>
+    </q-page-scroller>
   </q-page>
 </template>
 
@@ -369,9 +392,10 @@ import { useCurrency } from 'src/composables/useCurrency';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import Decimal from 'decimal.js';
-import { buildMemberBonusRows, filterMemberBonusRows, compareUnpaidMonths } from 'src/utils/memberBonusReport.mjs';
+import { buildMemberBonusRows, filterMemberBonusRows, compareUnpaidMonths, memberBonusTotals } from 'src/utils/memberBonusReport.mjs';
+import { createMemberBonusWorkbook, createMemberBonusPdf } from 'src/utils/memberBonusExport.mjs';
 import departmenttype from '../components/DepartmentTypeSelector.vue'
-import { useQuasar } from "quasar";
+import { exportFile, useQuasar } from "quasar";
 const startDate = ref('');
 const endDate = ref('');
 const reportType = ref('daily');
@@ -382,6 +406,7 @@ const userDailyLoading = ref(false);
 const memberBonusPayments = ref([]);
 const memberBonusSearch = ref('');
 const memberBonusPagination = ref({ rowsPerPage: 0 });
+const memberBonusTable = ref(null);
 const memberBonusLoading = ref(false);
 const memberBonusError = ref('');
 const memberRealtimeError = ref(false);
@@ -509,6 +534,7 @@ const memberBonusRows = computed(() => buildMemberBonusRows(
 const filteredMemberBonusRows = computed(() =>
   filterMemberBonusRows(memberBonusRows.value, memberBonusSearch.value)
 );
+const filteredMemberBonusTotals = computed(() => memberBonusTotals(filteredMemberBonusRows.value));
 const memberBonusColumns = [
   { name: 'id', label: 'Member ID', field: 'id', align: 'left', sortable: true },
   { name: 'name', label: 'Member Name', field: 'name', align: 'left', sortable: true },
@@ -525,6 +551,39 @@ const memberBonusColumns = [
     format: formatYearlyCurrency, sort: (left, right) => left.comparedTo(right),
   },
 ];
+const getMemberBonusExport = () => {
+  if (!memberBonusTable.value) throw new Error('The unpaid members table is unavailable.');
+  return {
+    rows: [...memberBonusTable.value.filteredSortedRows],
+    details: {
+      startDate: startDate.value,
+      endDate: endDate.value,
+      currency: currencyType.value === 'LC' ? 'Local Currency' : 'USD',
+      search: memberBonusSearch.value?.trim() || '',
+    },
+  };
+};
+const exportMemberBonusExcel = async () => {
+  try {
+    const { rows, details } = getMemberBonusExport();
+    const buffer = await createMemberBonusWorkbook(rows, details);
+    const result = exportFile('unpaid_members_report.xlsx', buffer,
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    if (result !== true) throw result;
+  } catch (error) {
+    console.error('Error exporting unpaid members to Excel:', error);
+    $q.notify({ type: 'negative', message: 'Unable to export the unpaid members report to Excel.' });
+  }
+};
+const exportMemberBonusPdf = () => {
+  try {
+    const { rows, details } = getMemberBonusExport();
+    createMemberBonusPdf(rows, details, memberBonusColumns, formatYearlyCurrency).save('unpaid_members_report.pdf');
+  } catch (error) {
+    console.error('Error exporting unpaid members to PDF:', error);
+    $q.notify({ type: 'negative', message: 'Unable to export the unpaid members report to PDF.' });
+  }
+};
 const scopedDailyPaidPayments = computed(() => dailyPaidPayments.value.filter(
   (payment) => paymentDpcIsInScope(payment.PaidDPC)
 ));
@@ -1179,6 +1238,12 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
+@media print {
+  .report-scroll-top {
+    display: none;
+  }
+}
+
 .styled-table {
   width: 100%;
   border-collapse: collapse;
